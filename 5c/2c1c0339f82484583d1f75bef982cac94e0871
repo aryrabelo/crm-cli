@@ -1,0 +1,20 @@
+internal/run/budget.go
+  h_b156936c57c455 1-72
+internal/run/engine.go
+  h_b156936c57c455 1-531
+internal/run/engine_test.go
+  h_b156936c57c455 1-318
+internal/run/store.go
+  h_b156936c57c455 1-291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c2c1c0339f82484583d1f75bef982cac94e0871",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
