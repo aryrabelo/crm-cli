@@ -1,0 +1,18 @@
+CHANGELOG.md
+  h_b156936c57c455 17-21
+CLAUDE.md
+  h_b156936c57c455 54-57,64,86-106,121
+README.md
+  h_b156936c57c455 24,176-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c3ebec73ecf93cd3b157b915a6fd1760abc799b",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
