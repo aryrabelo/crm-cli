@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `llm` provider kind: OpenAI-compatible chat completions with JSON answers (one repair request on an invalid answer, then the item fails); configured by `crm provider set <name> --model --price-in --price-out --max-tokens --base-url` or `CRM_LLM_BASE_URL`, `CRM_LLM_API_KEY`, `CRM_LLM_MODEL`, `CRM_LLM_PRICE_IN`, `CRM_LLM_PRICE_OUT`; cost = reported tokens × price per 1M tokens; the budget reserves the worst case (prompt bytes + max tokens, repair included)
 - `crm run --only expr` restricts a new run to matching rows; `crm run`, `run show` and `run show --items` report `tokens_in` / `tokens_out`
 - Migration `004_ai_columns.sql`: `run_items.tokens_in` / `tokens_out`, seeded `llm` provider (auth `CRM_LLM_API_KEY`)
+- Batch MCP tools next to the upstream one-entity tools: `crm_table_import` (CSV text or a rows array), `crm_rows_upsert_many`, `crm_table_query` (filters, columns, limit/offset, total), `crm_column_add` (several columns), `crm_run_start` (`dry_run`, budget, `wait: false` to return the run id at once), `crm_run_status` (several runs, optional items), `crm_qualify`, `crm_export` (csv/tsv/json text), `crm_push_dedupe`; arrays in, JSON out, errors reported per item
+- `crm mcp serve --http HOST:PORT [--token T]`: streamable HTTP transport at `/mcp`; bearer auth with `--token` or `CRM_MCP_TOKEN`, required when the address is not loopback; graceful shutdown on Ctrl-C
+- `crm push <table> --to person|org [--dedupe email|domain|fuzz] [--threshold 0.88] [--only expr] [--map col=field] [--dry-run]`: table rows become people or organizations, deduplicated against existing entities and earlier rows by normalized email, domain (from a domain, URL or email) or fuzzy name (accents, punctuation and Inc/LLC/Ltda… ignored); a match only fills empty fields
+- `crm bench run [--tasks bench] [--baseline per-entity] [--transport inprocess|http] [-f table|json]`: runs the 10 task files in `bench/` through an MCP client against fake providers and prints tool calls, provider calls, tokens, cost, wall time, payload size and check per task, plus totals; `--baseline per-entity` compares the call count with the one-entity tools (54× fewer calls on the 4 tasks both can do)
+
+### Changed
+
+- CLI data-plane commands (`table import|show|export`, `column add|list`, `run`, `run show`, `qualify`) and the MCP batch tools share one `internal/service` layer
+- `crm mcp serve` without `--http` keeps the stdio transport; it stops when stdin closes or on Ctrl-C
 
 ## [0.1.6] - 2026-03-08
 

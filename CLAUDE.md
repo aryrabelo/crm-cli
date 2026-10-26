@@ -9,7 +9,7 @@
 - **Language:** Go 1.23+
 - **Database:** SQLite via `modernc.org/sqlite` (pure Go, no CGO)
 - **CLI framework:** `cobra`
-- **MCP:** `mcp-go` (stdio transport)
+- **MCP:** `mcp-go` (stdio and streamable HTTP transports)
 - **Testing:** `testing` + `testify`
 - **Linting:** `golangci-lint`
 - **Build:** `go build`
@@ -48,7 +48,7 @@ internal/
     search.go                  # Cross-entity full-text search
     context.go                 # Person context briefing
     status.go                  # Dashboard summary
-    mcp.go                     # MCP server launcher
+    mcp.go                     # crm mcp serve (stdio, or --http with bearer --token)
     import.go                  # CSV import (fork: data plane)
     rows.go                    # Row export with custom fields (fork: data plane)
     table.go                   # crm table import/list/show/export (fork: data plane)
@@ -56,6 +56,8 @@ internal/
     run.go                     # crm run [--only], run list/show with tokens (fork: data plane)
     provider.go                # crm provider list/set, incl. llm model/prices (fork: data plane)
     qualify.go                 # crm qualify: yes/no/maybe ai column (+ reason) run through crm run (fork: data plane)
+    push.go                    # crm push: table rows → people/orgs with dedupe (fork: data plane)
+    bench.go                   # crm bench run [--baseline per-entity] (fork: data plane)
     custom_fields.go           # Custom field output for show commands
   db/
     db.go                      # Connection, pragmas, migration runner
@@ -79,7 +81,13 @@ internal/
   importer/
     importer.go                # Column mapping, upsert by key, export cells (fork: data plane)
   mcp/
-    server.go                  # MCP server setup + all tool definitions
+    server.go                  # Upstream one-entity tools (registerEntityTools)
+    serve.go                   # Server type: New, ServeStdio, Handler/ServeHTTP (bearer auth), RequiresToken
+    batch.go                   # Batch data-plane tools (arrays in, per-item errors), wait=false run tracker
+  service/                     # Data-plane operations shared by CLI commands and MCP batch tools (fork)
+    service.go / table.go / column.go / run.go / qualify.go
+    push.go / dedupe.go        # crm push / crm_push_dedupe: email, domain, fuzzy-name dedupe
+  bench/                       # crm bench: task files loader, fake providers, MCP-client runner (fork)
   format/
     format.go                  # Format resolver (table/json/csv/tsv)
     table.go                   # Table formatter
@@ -121,8 +129,8 @@ internal/
 2. **Repositories** (`internal/db/repo/`) — all database queries. Accept and return typed structs. Use parameterized queries.
 3. **Formatters** (`internal/format/`) — transform data to table/json/csv. No business logic.
 4. **Models** (`internal/model/`) — domain types, constants, error types. No imports from other internal packages.
-5. **MCP server** (`internal/mcp/`) — thin wrappers around the same repositories the CLI uses. No duplicate logic.
-6. **Data plane** (fork: `internal/table`, `internal/column`, `internal/run`, `internal/provider`, `internal/waterfall`, `internal/value`) — self-contained packages that own their SQL (parameterized, `repo.DBTX`) so the upstream tree stays untouched except for wiring. Dependency order: `value` ← `provider` ← `waterfall` ← `column` ← `table` ← `run` ← `cli`. Money is integer micro-USD (`provider.Cost`).
+5. **MCP server** (`internal/mcp/`) — thin wrappers: one-entity tools call the repositories, batch tools call `internal/service`, the same layer the data-plane CLI commands use. No duplicate logic.
+6. **Data plane** (fork: `internal/table`, `internal/column`, `internal/run`, `internal/provider`, `internal/waterfall`, `internal/value`, `internal/service`, `internal/bench`) — self-contained packages that own their SQL (parameterized, `repo.DBTX`) so the upstream tree stays untouched except for wiring. Dependency order: `value` ← `provider` ← `waterfall` ← `column` ← `table` ← `run` ← `service` ← `mcp` ← `bench` ← `cli`. Money is integer micro-USD (`provider.Cost`).
    - **ai columns run through the same engine as enrich columns** — one `crm run` path (budget reservation, cache by (provider, input hash), retry, resume, dry-run); never add a parallel execution path. An adapter's `Estimate` must be an upper bound of what `Enrich` charges (the llm adapter bounds tokens by prompt bytes + max tokens, repair call included), or the budget can be exceeded. LLM token counts travel in the context (`provider.WithUsage`) and land in `run_items.tokens_in/out`.
 
 ### Key Patterns
@@ -351,9 +359,9 @@ func TestPersonRepo_Create(t *testing.T) {
 
 ## MCP Server
 
-- Uses `mcp-go` with stdio transport
+- Uses `mcp-go`: stdio by default, streamable HTTP at `/mcp` with `crm mcp serve --http`; bearer `--token`/`CRM_MCP_TOKEN` is required for non-loopback addresses
 - **Never write to stdout** in MCP mode — stdout is the JSON-RPC transport. All logging goes to `stderr`.
-- Each MCP tool is a thin wrapper calling repository methods
+- One-entity tools are thin wrappers calling repository methods; batch tools are thin wrappers calling `internal/service` and report errors per item (`errText`) instead of failing the call
 - Return errors as MCP content with `isError: true` — don't return Go errors from tool handlers
 - Handle graceful shutdown via context cancellation
 - Tool input is JSON-decoded into Go structs
@@ -496,7 +504,7 @@ Runs GoReleaser to build binaries for all platforms, create GitHub Release with 
 
 ### Adding a new MCP tool
 
-1. Define input struct in `internal/mcp/server.go` (or reuse from `model/`)
-2. Register tool with description and handler
-3. Wire to existing repository method
-4. Test with MCP inspector
+1. Put the operation in `internal/service` (or a repository) so the CLI command and the tool share it
+2. Define the input struct in `internal/mcp/batch.go` with `json` / `jsonschema_description` tags and register it with `gomcp.WithInputSchema[T]()`
+3. Test it through an mcp-go client over every transport (`internal/mcp/batch_test.go`: in-process, stdio pipes, HTTP)
+4. If it changes what an agent pays per task, add or update a task in `bench/` and check `crm bench run --baseline per-entity`

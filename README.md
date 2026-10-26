@@ -229,6 +229,17 @@ crm run show 4                                                  # tokens_in / to
 - **Cost:** each call is charged the tokens the provider reports × the price. The budget reserves the worst case first — prompt bytes (a token is at least one byte) plus max tokens, twice to cover the repair — so a run never spends more than `--budget`. Cached answers cost `$0` and no tokens.
 - **qualify:** `--name` (default `qualified`), `--explain` (adds `<name>_reason`), `--only` (row filter), `--budget`, `--dry-run`, `--waterfall`, `--concurrency`. The prompt is the criteria plus every other column; re-running with the same criteria and rows is all cache hits.
 
+### Push (table rows → people / organizations, deduplicated)
+
+```bash
+crm push leads --to person --dry-run                   # plan: create / update / merge per row; writes nothing
+crm push leads --to person --only "qualified=yes"      # dedupe by email (default for people)
+crm push leads --to org                                # dedupe by domain (default for orgs; URL and email work too)
+crm push companies --to org --dedupe fuzz --threshold 0.9   # similar names: "ACME, Inc." = "Acmé Ltda" = "acme"
+```
+
+Columns map to fields as in `crm import` (aliases such as `name`, `email`, `company`, `website`; other columns become custom fields; `--map col=field` overrides). Each row is matched against existing entities and against the rows pushed before it, so duplicates inside the table merge too. A match keeps its values: the row only fills empty fields and custom fields it does not have yet. Rows without a name or dedupe key are reported per row and skipped. Exit code `2` when no column maps to the dedupe field.
+
 ## Output Formats
 
 Every command supports `--format` / `-f`:
@@ -268,7 +279,7 @@ Exit codes: `0` success, `1` error, `2` usage, `3` not found, `4` conflict, `10`
 
 ## AI Integration (MCP Server)
 
-`crm` includes a built-in [MCP](https://modelcontextprotocol.io/) server so AI agents can query and update your CRM over a structured protocol.
+`crm` includes a built-in [MCP](https://modelcontextprotocol.io/) server so AI agents can query and update your CRM over a structured protocol: over stdio (what desktop clients spawn) or streamable HTTP.
 
 ### Claude Code
 
@@ -301,7 +312,35 @@ Then copy [`AGENT.md`](AGENT.md) into your project as `CLAUDE.md` so Claude know
 
 4. Create a new **Project**, click the project settings, and paste the contents of [`AGENT.md`](AGENT.md) into the project instructions. This teaches Claude when to log interactions, how to maintain contact summaries, tagging conventions, and more.
 
+### Streamable HTTP
+
+```bash
+crm mcp serve --http 127.0.0.1:8765                         # http://127.0.0.1:8765/mcp, no auth on loopback
+CRM_MCP_TOKEN=s3cret crm mcp serve --http :8765             # every request needs "Authorization: Bearer s3cret"
+claude mcp add --transport http crm http://127.0.0.1:8765/mcp
+```
+
+`--token` (or `CRM_MCP_TOKEN`) is **required** when the address is not loopback (`127.0.0.1`, `::1`, `localhost`); a request without the right bearer token gets `401`. Ctrl-C shuts the server down gracefully; runs started with `wait: false` are left `interrupted` and resumable.
+
 ### Available Tools
+
+**Batch tools** (data plane). They accept arrays where an agent would otherwise loop, and report errors per item instead of failing the call — one call does what the one-entity tools need N calls for. They call the same service as the CLI commands, so both behave identically.
+
+| Tool | Description | CLI twin |
+|------|-------------|----------|
+| `crm_table_import` | Create/append a table from `csv` text or a `rows` array of objects; upsert by `key` | `crm table import` |
+| `crm_rows_upsert_many` | Upsert many rows into an existing table (each row sets only the cells it names) | — |
+| `crm_table_query` | `filters` (AND), `columns`, `limit` (default 100) / `offset`; returns `total` and `_row` per row | `crm table show` |
+| `crm_column_add` | Declare one or more columns (`input`, `formula`, `enrich`, `ai`) | `crm column add` |
+| `crm_run_start` | Fill enrich/ai columns in one budget-capped run; `dry_run` estimates; `wait: false` returns the run id at once | `crm run` |
+| `crm_run_status` | Status, counts, calls, tokens, spend of several runs; `items: true` adds every item | `crm run show` |
+| `crm_qualify` | yes/no/maybe (+ reason) per row from markdown criteria | `crm qualify` |
+| `crm_export` | Filtered rows as `csv`, `tsv` or `json` text | `crm table export` |
+| `crm_push_dedupe` | Table rows → people/orgs, dedupe by email, domain or fuzzy name; `dry_run` | `crm push` |
+
+Budgets are a number or a string of dollars (`0.5`, `"0.50"`). Call-level errors (unknown table, invalid filter, missing budget) come back as tool errors with the message; database and network details stay out of results. Message sequences (`crm_sequence_render`) belong to slice S4 and are not part of this server yet.
+
+**One-entity tools** (upstream, unchanged):
 
 | Tool | Description |
 |------|-------------|
@@ -323,6 +362,36 @@ Then copy [`AGENT.md`](AGENT.md) into your project as `CLAUDE.md` so Claude know
 | `crm_task_list` | List open tasks |
 | `crm_tag_apply` | Apply a tag |
 | `crm_stats` | CRM summary stats |
+
+### Bench: what a task costs an agent
+
+The number of tool calls is what an agent pays for (each call is a model round trip). `crm bench run` measures it on 10 reproducible tasks in [`bench/`](bench/) — JSON task files plus CSV/markdown fixtures — each executed by an MCP client against a crm server on a fresh in-memory database, with local fake providers (an enrichment API at $0.002/call and an OpenAI-compatible LLM at $0.15 / $0.60 per 1M tokens), so a run is deterministic and free.
+
+```bash
+crm bench run                                  # per task: tool calls, provider calls, tokens, cost, wall time, KB, check
+crm bench run --baseline per-entity            # same tasks with the one-entity tools only
+crm bench run --transport http -f json         # through streamable HTTP + bearer auth instead of in-process
+```
+
+Result of `crm bench run --baseline per-entity` (call counts, tokens and cost are deterministic; wall time is a few ms per task against the local fakes):
+
+| Task | Batch calls | Per-entity calls | Gap | Provider calls | Tokens | Cost | Batch check | Per-entity check |
+|------|------------:|-----------------:|----:|---------------:|-------:|-----:|:-----------:|:----------------:|
+| import-135-csv | 1 | 135 | 135× | 0 | 0 | $0.00 | pass | pass |
+| update-20-titles | 1 | 40 | 40× | 0 | 0 | $0.00 | pass | pass |
+| enrich-industry (135 rows, 27 domains) | 2 | n/a | | 27 | 0 | $0.054 | pass | n/a |
+| enrich-budget-cap ($0.01) | 2 | n/a | | 5 | 0 | $0.01 | pass | n/a |
+| qualify-20 | 1 | n/a | | 20 | 5,175 | $0.001057 | pass | n/a |
+| ai-score-and-filter | 3 | n/a | | 20 | 1,950 | $0.000576 | pass | n/a |
+| find-dedupe-people (40 rows → 30) | 1 | 40 | 40× | 0 | 0 | $0.00 | pass | **FAIL** (35 people) |
+| fuzzy-dedupe-orgs (12 rows → 5) | 1 | n/a | | 0 | 0 | $0.00 | pass | n/a |
+| export-filtered | 1 | 1 | 1× | 0 | 0 | $0.00 | pass | pass |
+| pipeline: import → qualify → push → export | 4 | n/a | | 20 | 4,500 | $0.000957 | pass | n/a |
+| **Total** | **17** (4 on shared tasks) | **216** | **54×** | 92 | 11,625 | $0.06659 | 10/10 | 3/4 |
+
+n/a: the one-entity tools have no tables, columns, providers or organization create. The per-entity dedupe relies on `crm_person_create`'s exact-match duplicate check, so case variants of an email slip through; a filtered read (`export-filtered`) is one call either way, but the batch answer is 0.4 KB of CSV instead of 2 KB of full person records.
+
+A task file has a `setup` (a table for batch mode, entities for per-entity mode, written directly and not counted), a `batch` plan and either a `per_entity` plan or `per_entity_na` with the reason. A plan is `steps` (tool calls; `foreach` repeats calls per CSV row; arguments are templates: `{{file:path}}`, `{{rows:file.csv}}`, `{{row.col}}`, `{{last.0.id}}`) and `checks` (`sql` or a `result` path, compared with `equals`, `gte`, `lte` or `len`). Per-entity plans may only call the upstream tools. `crm bench run` exits `1` when a batch task fails its check; a baseline that gets a task wrong is reported, not fatal.
 
 ### Example AI Workflow
 
