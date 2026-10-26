@@ -1,0 +1,40 @@
+internal/cli/column.go
+  h_b156936c57c455 8,77-81,84-85,88,121
+internal/cli/provider.go
+  h_b156936c57c455 4,14,18-22
+internal/cli/qualify.go
+  h_b156936c57c455 14,67-68,86,93,97,99,102-104,107,109-110,112-114,120
+internal/cli/run.go
+  h_b156936c57c455 13,56,58,139,154,197,236,240,242,248
+internal/cli/table.go
+  h_b156936c57c455 14,96,162,226
+internal/provider/registry.go
+  h_b156936c57c455 5,7,24-29
+internal/run/engine.go
+  h_b156936c57c455 308-309,395-432
+internal/service/column.go
+  h_b156936c57c455 1-170
+internal/service/qualify.go
+  h_b156936c57c455 1-182
+internal/service/run.go
+  h_b156936c57c455 1-102
+internal/service/service.go
+  h_b156936c57c455 1-43
+internal/service/table.go
+  h_b156936c57c455 1-186
+internal/table/filter.go
+  h_b156936c57c455 161-180
+internal/table/import.go
+  h_b156936c57c455 15,21,25-43,49,51-52,58-59,69-109,111-112,120,130-131,133-180,189,202,220-221,223-227,229-234,236-237,243-247,249-251,254,256-257,260-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "310567d2f4b04cf1e02470827861f4858d46d4fb",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
