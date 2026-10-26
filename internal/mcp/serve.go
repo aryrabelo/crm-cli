@@ -1,0 +1,145 @@
+package mcp
+
+import (
+	"context"
+	"crypto/subtle"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/jdanielnd/crm-cli/internal/provider"
+	"github.com/jdanielnd/crm-cli/internal/service"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+// HTTPPath is the endpoint of the streamable HTTP transport.
+const HTTPPath = "/mcp"
+
+// Server is the crm MCP server: the upstream per-entity tools plus the
+// batch-shaped data-plane tools, which call the same service as the CLI.
+type Server struct {
+	mcp    *server.MCPServer
+	svc    *service.Service
+	runs   *runTracker
+	entity map[string]bool
+}
+
+type options struct {
+	registry *provider.Registry
+}
+
+// Option configures New.
+type Option func(*options)
+
+// WithRegistry sets the provider registry used by enrich and ai columns
+// (default provider.NewEnvRegistry).
+func WithRegistry(r *provider.Registry) Option {
+	return func(o *options) { o.registry = r }
+}
+
+// New creates the MCP server on db. Close it to stop background runs.
+func New(db *sql.DB, version string, opts ...Option) *Server {
+	o := options{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.registry == nil {
+		o.registry = provider.NewEnvRegistry()
+	}
+	s := &Server{
+		mcp:    server.NewMCPServer("crm", version, server.WithToolCapabilities(false)),
+		svc:    service.New(db, o.registry),
+		runs:   newRunTracker(),
+		entity: map[string]bool{},
+	}
+	registerEntityTools(s.mcp, db)
+	for name := range s.mcp.ListTools() {
+		s.entity[name] = true
+	}
+	s.registerBatchTools()
+	return s
+}
+
+// MCP returns the underlying mcp-go server (e.g. for an in-process client).
+func (s *Server) MCP() *server.MCPServer { return s.mcp }
+
+// IsEntityTool reports whether name is one of the upstream per-entity tools.
+func (s *Server) IsEntityTool(name string) bool { return s.entity[name] }
+
+// Close interrupts the runs started with wait=false (they stay resumable)
+// and waits for them to record their state.
+func (s *Server) Close() { s.runs.close() }
+
+// ServeStdio serves JSON-RPC on in/out until ctx is cancelled or in closes.
+func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) error {
+	return server.NewStdioServer(s.mcp).Listen(ctx, in, out)
+}
+
+// Handler serves the streamable HTTP transport at HTTPPath. A non-empty
+// token requires "Authorization: Bearer <token>" on every request.
+func (s *Server) Handler(token string) http.Handler {
+	var h http.Handler = server.NewStreamableHTTPServer(s.mcp, server.WithEndpointPath(HTTPPath))
+	if token != "" {
+		h = bearerAuth(token, h)
+	}
+	mux := http.NewServeMux()
+	mux.Handle(HTTPPath, h)
+	return mux
+}
+
+func bearerAuth(token string, next http.Handler) http.Handler {
+	want := []byte("Bearer " + token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="crm"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ServeHTTP listens on addr and serves Handler(token) until ctx is
+// cancelled, then shuts down gracefully. ready (optional) receives the bound
+// address once listening.
+func (s *Server) ServeHTTP(ctx context.Context, addr, token string, ready func(net.Addr)) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	srv := &http.Server{Handler: s.Handler(token), ReadHeaderTimeout: 10 * time.Second}
+	if ready != nil {
+		ready(ln.Addr())
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Serve(ln) }()
+	select {
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdown)
+	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
+}
+
+// RequiresToken reports whether binding addr exposes the server beyond this
+// machine (any host other than a loopback address or "localhost").
+func RequiresToken(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return true
+	}
+	if host == "localhost" {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
+}
