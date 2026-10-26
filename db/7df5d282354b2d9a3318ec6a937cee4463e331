@@ -1,0 +1,26 @@
+internal/cli/data_plane_test.go
+  h_b156936c57c455 227
+internal/db/db_test.go
+  h_b156936c57c455 61
+internal/db/migrations/004_ai_columns.sql
+  h_b156936c57c455 1-17
+internal/provider/config.go
+  h_b156936c57c455 9,16-19,23-24,45-53,152-163
+internal/provider/llm.go
+  h_b156936c57c455 1-279
+internal/provider/llm_test.go
+  h_b156936c57c455 1-204
+internal/provider/registry.go
+  h_b156936c57c455 28-29,31,34-46,78-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db7df5d282354b2d9a3318ec6a937cee4463e331",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
