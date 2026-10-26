@@ -6,19 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/model"
 )
 
-// Kinds lists the adapter implementations a provider row can use.
-func Kinds() []string { return []string{"exa", "jina", "github", "http"} }
+// Kinds lists the adapter implementations a provider row can use. llm
+// providers serve ai columns (see Registry.OpenLLM); the others serve enrich
+// waterfalls (Registry.Open).
+func Kinds() []string { return []string{"exa", "jina", "github", "http", "llm"} }
 
 // Settings is the kind-specific part of a provider's configuration.
 type Settings struct {
-	// BaseURL overrides the API root (exa, jina, github). For every kind the
-	// environment variable CRM_PROVIDER_<NAME>_URL takes precedence.
+	// BaseURL overrides the API root (exa, jina, github, llm). For every kind
+	// the environment variable CRM_PROVIDER_<NAME>_URL takes precedence.
 	BaseURL string `json:"base_url,omitempty"`
 	// Endpoint selects the exa API: "search" (default) or "contents".
 	Endpoint string `json:"endpoint,omitempty"`
@@ -39,6 +42,15 @@ type Settings struct {
 	// AuthHeader is the http header carrying the credential named by
 	// auth_ref. Empty means "Authorization: Bearer <token>".
 	AuthHeader string `json:"auth_header,omitempty"`
+	// Model is the llm model (default: $CRM_LLM_MODEL).
+	Model string `json:"model,omitempty"`
+	// PriceInPerMTok and PriceOutPerMTok are the llm prices in USD per 1M
+	// prompt / completion tokens (default: $CRM_LLM_PRICE_IN / _OUT). nil is
+	// unset; 0 is free (local model, subscription gateway).
+	PriceInPerMTok  *float64 `json:"price_in_per_mtok,omitempty"`
+	PriceOutPerMTok *float64 `json:"price_out_per_mtok,omitempty"`
+	// MaxTokens caps the completion tokens of one llm call (default 512).
+	MaxTokens int `json:"max_tokens,omitempty"`
 }
 
 // Config is one row of the providers table.
@@ -136,6 +148,18 @@ func (c *Config) Validate() error {
 	case "http":
 		if c.Settings.URL == "" {
 			return model.NewExitError(model.ErrValidation, "provider %s: http providers need a url template", c.Name)
+		}
+	case "llm":
+		if c.Price != 0 {
+			return model.NewExitError(model.ErrValidation, "provider %s: llm providers are priced per token (--price-in, --price-out), not per call", c.Name)
+		}
+		for _, p := range []*float64{c.Settings.PriceInPerMTok, c.Settings.PriceOutPerMTok} {
+			if p != nil && (*p < 0 || math.IsNaN(*p) || math.IsInf(*p, 0)) {
+				return model.NewExitError(model.ErrValidation, "provider %s: token prices must be >= 0", c.Name)
+			}
+		}
+		if c.Settings.MaxTokens < 0 {
+			return model.NewExitError(model.ErrValidation, "provider %s: max tokens must be >= 0", c.Name)
 		}
 	}
 	return nil

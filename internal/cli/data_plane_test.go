@@ -224,7 +224,7 @@ func TestProvider_SetAndList(t *testing.T) {
 	for _, p := range jsonRows(t, out) {
 		names = append(names, p["name"].(string))
 	}
-	assert.Equal(t, []string{"exa", "exa-contents", "github", "jina"}, names)
+	assert.Equal(t, []string{"exa", "exa-contents", "github", "jina", "llm"}, names)
 
 	_, _, code = crm(t, dbPath, "provider", "set", "mine", "--url", "https://x/{{input}}")
 	assert.Equal(t, 2, code, "--kind required to create")
