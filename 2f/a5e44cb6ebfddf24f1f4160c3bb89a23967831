@@ -1,0 +1,16 @@
+internal/db/db_test.go
+  h_b156936c57c455 61
+internal/db/migrations/003_data_plane.sql
+  h_b156936c57c455 1-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2fa5e44cb6ebfddf24f1f4160c3bb89a23967831",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
