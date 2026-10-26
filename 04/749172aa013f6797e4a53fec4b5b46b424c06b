@@ -1,0 +1,30 @@
+internal/csvio/csvio.go
+  h_b156936c57c455 1-211
+internal/csvio/csvio_test.go
+  h_b156936c57c455 1-80
+internal/db/db_test.go
+  h_b156936c57c455 17,61
+internal/db/migrations/002_imports.sql
+  h_b156936c57c455 1-38
+internal/db/repo/custom_field.go
+  h_b156936c57c455 1-138
+internal/db/repo/custom_field_test.go
+  h_b156936c57c455 1-76
+internal/db/repo/import.go
+  h_b156936c57c455 1-315
+internal/db/repo/import_test.go
+  h_b156936c57c455 1-121
+internal/model/import.go
+  h_b156936c57c455 1-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04749172aa013f6797e4a53fec4b5b46b424c06b",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
