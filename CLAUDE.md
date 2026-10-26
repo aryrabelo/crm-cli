@@ -52,9 +52,10 @@ internal/
     import.go                  # CSV import (fork: data plane)
     rows.go                    # Row export with custom fields (fork: data plane)
     table.go                   # crm table import/list/show/export (fork: data plane)
-    column.go                  # crm column add/list/rm (fork: data plane)
-    run.go                     # crm run, run list/show (fork: data plane)
-    provider.go                # crm provider list/set (fork: data plane)
+    column.go                  # crm column add/list/rm, incl. ai columns (fork: data plane)
+    run.go                     # crm run [--only], run list/show with tokens (fork: data plane)
+    provider.go                # crm provider list/set, incl. llm model/prices (fork: data plane)
+    qualify.go                 # crm qualify: yes/no/maybe ai column (+ reason) run through crm run (fork: data plane)
     custom_fields.go           # Custom field output for show commands
   db/
     db.go                      # Connection, pragmas, migration runner
@@ -62,6 +63,7 @@ internal/
       001_initial.sql
       002_imports.sql          # Import batches + rows (fork: data plane)
       003_data_plane.sql       # Tables, columns, runs, run items, cache, providers (fork: data plane)
+      004_ai_columns.sql       # run_items tokens_in/out, seeded llm provider (fork: data plane)
     repo/
       person.go                # Person repository
       org.go                   # Organization repository
@@ -88,14 +90,16 @@ internal/
   provider/
     provider.go                # Adapter interface (Enrich/Estimate/Key), Cost, retryable Error (fork: data plane)
     config.go                  # providers table: config store + validation
-    registry.go                # Kind → adapter, env credentials, CRM_PROVIDER_<NAME>_URL override
+    registry.go                # Kind → adapter (Open) or llm client (OpenLLM), env credentials/defaults, CRM_PROVIDER_<NAME>_URL override
     httpcall.go                # Shared HTTP call + status classification (404 = no data, 429/5xx retryable)
     exa.go / jina.go / github.go / http.go  # Adapters (http = URL/body template + JSON path)
+    llm.go                     # OpenAI-compatible chat client; Bind(Contract) = JSON answer + 1 repair; token Usage via context
     limiter.go                 # Per-provider rate limiter
   waterfall/
     waterfall.go               # Ordered providers, cache-first fallthrough, estimate; enrichment_cache store
   column/
-    column.go                  # Column types (input/formula/enrich), validation, formula eval, waterfall build
+    column.go                  # Column types (input/formula/enrich/ai), validation, formula eval, Input/Cells/Sources, waterfall build
+    ai.go                      # ai columns: --output spec, prompt validation/rendering, answer contract
   table/
     table.go                   # Workspaces, rows, columns store (fork: data plane)
     import.go                  # CSV → table rows (order kept, upsert by key)
@@ -119,6 +123,7 @@ internal/
 4. **Models** (`internal/model/`) — domain types, constants, error types. No imports from other internal packages.
 5. **MCP server** (`internal/mcp/`) — thin wrappers around the same repositories the CLI uses. No duplicate logic.
 6. **Data plane** (fork: `internal/table`, `internal/column`, `internal/run`, `internal/provider`, `internal/waterfall`, `internal/value`) — self-contained packages that own their SQL (parameterized, `repo.DBTX`) so the upstream tree stays untouched except for wiring. Dependency order: `value` ← `provider` ← `waterfall` ← `column` ← `table` ← `run` ← `cli`. Money is integer micro-USD (`provider.Cost`).
+   - **ai columns run through the same engine as enrich columns** — one `crm run` path (budget reservation, cache by (provider, input hash), retry, resume, dry-run); never add a parallel execution path. An adapter's `Estimate` must be an upper bound of what `Enrich` charges (the llm adapter bounds tokens by prompt bytes + max tokens, repair call included), or the budget can be exceeded. LLM token counts travel in the context (`provider.WithUsage`) and land in `run_items.tokens_in/out`.
 
 ### Key Patterns
 

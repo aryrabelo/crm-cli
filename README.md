@@ -22,6 +22,7 @@ Single static binary. SQLite database. No cloud. No accounts. Your data stays on
 - **Context Briefing** — one command to get everything about a person before a meeting
 - **AI-Ready** — built-in MCP server for Claude and other AI agents
 - **Enrichment Pipeline** — CSV tables, computed columns and batch runs with provider waterfall, cache, budget and resume
+- **AI Columns & Qualify** — per-row LLM answers (typed: text, score, enum, bool) and `crm qualify --explain` decisions with reasons, through any OpenAI-compatible endpoint, with tokens and cost per run
 - **Multiple Output Formats** — table, JSON, CSV, TSV — pipe into anything
 - **Zero Dependencies** — single binary, pure-Go SQLite, runs anywhere
 
@@ -195,13 +196,38 @@ crm provider set mine --kind http --url "https://api.example.com/v1/find?q={{inp
   --auth-env EXAMPLE_KEY --price 0.002
 ```
 
-- **Column types:** `input` (imported cells), `formula` (template evaluated on read; `{{col}}`, `{{col.json.path}}`), `enrich` (filled by `crm run`; `--from` is the input column, default the table key; `--field` keeps one value of the answer).
+- **Column types:** `input` (imported cells), `formula` (template evaluated on read; `{{col}}`, `{{col.json.path}}`), `enrich` (filled by `crm run`; `--from` is the input column, default the table key; `--field` keeps one value of the answer), `ai` (filled by `crm run` with an LLM answer per row — see below). `crm run --only expr` restricts a run to matching rows.
 - **Waterfall:** providers are tried in order; the first non-empty answer wins, errors and empty answers fall through, and the run item records which provider answered.
 - **Cache:** every answer is cached by (provider, input hash), and the cache is consulted for the whole waterfall before anything is spent — re-running costs `$0`.
 - **Budget:** a call is made only after its price is reserved, so a run never spends more than `--budget`; items that do not fit are marked `skipped`. `--budget` is required whenever a run may spend money (`--dry-run` shows how much).
 - **Retry:** 429, 408, 5xx and network timeouts are retried `--retry` times (default 2) with exponential backoff from `--backoff` (default 500ms), honoring `Retry-After`. Failed calls cost nothing.
 - **Checkpoint/resume:** each row × column item is saved as it finishes; Ctrl-C leaves the run `interrupted`, and `crm run --resume <id>` processes only items that are not done.
 - **Providers:** `exa` (search, `EXA_API_KEY`, $0.005/call), `exa-contents` ($0.001/page), `jina` (Reader, optional `JINA_API_KEY`, free), `github` (users/orgs API, optional `GITHUB_TOKEN`, free), plus any JSON API as a generic `http` provider. Prices and rates are provider config (`crm provider set`); credentials are read from the environment, never stored. `CRM_PROVIDER_<NAME>_URL` overrides a provider's base URL.
+
+### AI Columns & Qualify (per-row LLM decisions)
+
+An **ai column** asks an LLM one question per row: the prompt is a template whose `{{column}}` placeholders are filled with the row's cells, and the answer is typed. **`crm qualify`** builds that column for you from an ICP criteria file: a `yes`/`no`/`maybe` decision per row and, with `--explain`, a 1–2 sentence reason citing the row's fields. Both run through `crm run`, so cache, budget, retry, resume and `--dry-run` work the same way.
+
+```bash
+crm provider set llm --model gpt-4o-mini --price-in 0.15 --price-out 0.60   # USD per 1M tokens
+export CRM_LLM_API_KEY=sk-...                                               # never stored
+crm column add leads fit --type ai --prompt files/fit.md --output score:0-100 --explain
+crm run leads --columns fit --budget 0.50
+crm table export leads --only "fit>=70"
+
+crm qualify leads --criteria files/icp.md --explain --dry-run   # estimated calls and worst-case cost; writes nothing
+crm qualify leads --criteria files/icp.md --explain --budget 0.50
+# stderr, 5 rows on a subscription gateway (price 0):
+# qualify leads.qualified: yes 2 · no 2 · maybe 1 · failed 0 · skipped 0 — tokens in 1991 / out 444 · spent $0.00 of $0.50 budget
+crm table export leads -f csv --only "qualified=yes"            # company,…,qualified,qualified_reason
+crm run show 4                                                  # tokens_in / tokens_out per run
+```
+
+- **LLM provider:** the built-in `llm` provider speaks OpenAI-compatible chat completions (`POST {base}/chat/completions`). Base URL from `--base-url`, else `CRM_LLM_BASE_URL`, else `https://api.openai.com/v1`; key from `CRM_LLM_API_KEY`; model from `--model` or `CRM_LLM_MODEL`; prices from `--price-in`/`--price-out` or `CRM_LLM_PRICE_IN`/`CRM_LLM_PRICE_OUT` (required — `0` for a local model or a subscription gateway); `--max-tokens` per call (default 512). More models/gateways: `crm provider set <name> --kind llm …`, then `--waterfall a,b` on the column (the next model is tried when one fails).
+- **Prompt:** `--prompt` is a file (or inline text). Every `{{placeholder}}` must name a column — unknown ones fail at `column add`. A row whose placeholders are all empty is not sent.
+- **Output:** `text`, `score:MIN-MAX` (stored as a number), `enum:a|b|c` (stored as the canonical value), `bool`. The model must answer a JSON object; an invalid answer gets one repair request, then the row fails (resumable).
+- **Cost:** each call is charged the tokens the provider reports × the price. The budget reserves the worst case first — prompt bytes (a token is at least one byte) plus max tokens, twice to cover the repair — so a run never spends more than `--budget`. Cached answers cost `$0` and no tokens.
+- **qualify:** `--name` (default `qualified`), `--explain` (adds `<name>_reason`), `--only` (row filter), `--budget`, `--dry-run`, `--waterfall`, `--concurrency`. The prompt is the criteria plus every other column; re-running with the same criteria and rows is all cache hits.
 
 ## Output Formats
 
