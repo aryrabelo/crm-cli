@@ -1,0 +1,24 @@
+internal/cli/column.go
+  h_b156936c57c455 4-5,8,13,24,49-54,60-138,153,155,167-173,176-177,184-186,193,201,203-204,208-221,224,230-238
+internal/cli/provider.go
+  h_b156936c57c455 7,27-28,30-33,36-42,59-77,84,120,122,131-135,139-142,193-212,227,232,241-244
+internal/cli/qualify.go
+  h_b156936c57c455 1-230
+internal/cli/qualify_test.go
+  h_b156936c57c455 1-248
+internal/cli/root.go
+  h_b156936c57c455 58
+internal/cli/run.go
+  h_b156936c57c455 34-35,67-68,95-122,124,132-133,140-142,146-147,157,160-161,190,197-198,202-203,256-257,304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "081a92179d2c25fbb1269e7808e612c7750697b2",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
