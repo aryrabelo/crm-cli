@@ -1,0 +1,24 @@
+internal/cli/push.go
+  h_b156936c57c455 1-84
+internal/cli/push_test.go
+  h_b156936c57c455 1-83
+internal/cli/root.go
+  h_b156936c57c455 59
+internal/service/dedupe.go
+  h_b156936c57c455 1-150
+internal/service/dedupe_test.go
+  h_b156936c57c455 1-50
+internal/service/push.go
+  h_b156936c57c455 1-284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27ee7ca63f141fb06cc4be41f1bc275eb99e5112",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
