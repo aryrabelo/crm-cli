@@ -1,0 +1,189 @@
+name,email,company,Cidade
+José da Silva 000,lead000@exemplo.com.br,,"São Paulo, SP"
+Ana 001,lead001@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+Maria  Clara 002,lead002@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+Bia  003,lead003@exemplo.com.br,"emoji 🚀, ok",
+Zoë O'Brien 004,lead004@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+"Smith, Jane 005",lead005@exemplo.com.br,, espaço na borda 
+"Joe ""JJ"" Doe 006",lead006@exemplo.com.br,"x
+y","emoji 🚀, ok"
+José da Silva 007,lead007@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+Ana 008,lead008@exemplo.com.br,"Diz ""oi"" sempre",
+Maria  Clara 009,lead009@exemplo.com.br,"linha 1
+linha 2","x
+y"
+Bia  010,lead010@exemplo.com.br,,"São Paulo, SP"
+Zoë O'Brien 011,lead011@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+"Smith, Jane 012",lead012@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+"Joe ""JJ"" Doe 013",lead013@exemplo.com.br,"emoji 🚀, ok",
+José da Silva 014,lead014@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+Ana 015,lead015@exemplo.com.br,, espaço na borda 
+Maria  Clara 016,lead016@exemplo.com.br,"x
+y","emoji 🚀, ok"
+Bia  017,lead017@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+Zoë O'Brien 018,lead018@exemplo.com.br,"Diz ""oi"" sempre",
+"Smith, Jane 019",lead019@exemplo.com.br,"linha 1
+linha 2","x
+y"
+"Joe ""JJ"" Doe 020",lead020@exemplo.com.br,,"São Paulo, SP"
+José da Silva 021,lead021@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+Ana 022,lead022@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+Maria  Clara 023,lead023@exemplo.com.br,"emoji 🚀, ok",
+Bia  024,lead024@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+Zoë O'Brien 025,lead025@exemplo.com.br,, espaço na borda 
+"Smith, Jane 026",lead026@exemplo.com.br,"x
+y","emoji 🚀, ok"
+"Joe ""JJ"" Doe 027",lead027@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+José da Silva 028,lead028@exemplo.com.br,"Diz ""oi"" sempre",
+Ana 029,lead029@exemplo.com.br,"linha 1
+linha 2","x
+y"
+Maria  Clara 030,lead030@exemplo.com.br,,"São Paulo, SP"
+Bia  031,lead031@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+Zoë O'Brien 032,lead032@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+"Smith, Jane 033",lead033@exemplo.com.br,"emoji 🚀, ok",
+"Joe ""JJ"" Doe 034",lead034@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+José da Silva 035,lead035@exemplo.com.br,, espaço na borda 
+Ana 036,lead036@exemplo.com.br,"x
+y","emoji 🚀, ok"
+Maria  Clara 037,lead037@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+Bia  038,lead038@exemplo.com.br,"Diz ""oi"" sempre",
+Zoë O'Brien 039,lead039@exemplo.com.br,"linha 1
+linha 2","x
+y"
+"Smith, Jane 040",lead040@exemplo.com.br,,"São Paulo, SP"
+"Joe ""JJ"" Doe 041",lead041@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+José da Silva 042,lead042@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+Ana 043,lead043@exemplo.com.br,"emoji 🚀, ok",
+Maria  Clara 044,lead044@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+Bia  045,lead045@exemplo.com.br,, espaço na borda 
+Zoë O'Brien 046,lead046@exemplo.com.br,"x
+y","emoji 🚀, ok"
+"Smith, Jane 047",lead047@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+"Joe ""JJ"" Doe 048",lead048@exemplo.com.br,"Diz ""oi"" sempre",
+José da Silva 049,lead049@exemplo.com.br,"linha 1
+linha 2","x
+y"
+Ana 050,lead050@exemplo.com.br,,"São Paulo, SP"
+Maria  Clara 051,lead051@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+Bia  052,lead052@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+Zoë O'Brien 053,lead053@exemplo.com.br,"emoji 🚀, ok",
+"Smith, Jane 054",lead054@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+"Joe ""JJ"" Doe 055",lead055@exemplo.com.br,, espaço na borda 
+José da Silva 056,lead056@exemplo.com.br,"x
+y","emoji 🚀, ok"
+Ana 057,lead057@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+Maria  Clara 058,lead058@exemplo.com.br,"Diz ""oi"" sempre",
+Bia  059,lead059@exemplo.com.br,"linha 1
+linha 2","x
+y"
+Zoë O'Brien 060,lead060@exemplo.com.br,,"São Paulo, SP"
+"Smith, Jane 061",lead061@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+"Joe ""JJ"" Doe 062",lead062@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+José da Silva 063,lead063@exemplo.com.br,"emoji 🚀, ok",
+Ana 064,lead064@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+Maria  Clara 065,lead065@exemplo.com.br,, espaço na borda 
+Bia  066,lead066@exemplo.com.br,"x
+y","emoji 🚀, ok"
+Zoë O'Brien 067,lead067@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+"Smith, Jane 068",lead068@exemplo.com.br,"Diz ""oi"" sempre",
+"Joe ""JJ"" Doe 069",lead069@exemplo.com.br,"linha 1
+linha 2","x
+y"
+José da Silva 070,lead070@exemplo.com.br,,"São Paulo, SP"
+Ana 071,lead071@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+Maria  Clara 072,lead072@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+Bia  073,lead073@exemplo.com.br,"emoji 🚀, ok",
+Zoë O'Brien 074,lead074@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+"Smith, Jane 075",lead075@exemplo.com.br,, espaço na borda 
+"Joe ""JJ"" Doe 076",lead076@exemplo.com.br,"x
+y","emoji 🚀, ok"
+José da Silva 077,lead077@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+Ana 078,lead078@exemplo.com.br,"Diz ""oi"" sempre",
+Maria  Clara 079,lead079@exemplo.com.br,"linha 1
+linha 2","x
+y"
+Bia  080,lead080@exemplo.com.br,,"São Paulo, SP"
+Zoë O'Brien 081,lead081@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+"Smith, Jane 082",lead082@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+"Joe ""JJ"" Doe 083",lead083@exemplo.com.br,"emoji 🚀, ok",
+José da Silva 084,lead084@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+Ana 085,lead085@exemplo.com.br,, espaço na borda 
+Maria  Clara 086,lead086@exemplo.com.br,"x
+y","emoji 🚀, ok"
+Bia  087,lead087@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+Zoë O'Brien 088,lead088@exemplo.com.br,"Diz ""oi"" sempre",
+"Smith, Jane 089",lead089@exemplo.com.br,"linha 1
+linha 2","x
+y"
+"Joe ""JJ"" Doe 090",lead090@exemplo.com.br,,"São Paulo, SP"
+José da Silva 091,lead091@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+Ana 092,lead092@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+Maria  Clara 093,lead093@exemplo.com.br,"emoji 🚀, ok",
+Bia  094,lead094@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+Zoë O'Brien 095,lead095@exemplo.com.br,, espaço na borda 
+"Smith, Jane 096",lead096@exemplo.com.br,"x
+y","emoji 🚀, ok"
+"Joe ""JJ"" Doe 097",lead097@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+José da Silva 098,lead098@exemplo.com.br,"Diz ""oi"" sempre",
+Ana 099,lead099@exemplo.com.br,"linha 1
+linha 2","x
+y"
+Maria  Clara 100,lead100@exemplo.com.br,,"São Paulo, SP"
+Bia  101,lead101@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+Zoë O'Brien 102,lead102@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+"Smith, Jane 103",lead103@exemplo.com.br,"emoji 🚀, ok",
+"Joe ""JJ"" Doe 104",lead104@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+José da Silva 105,lead105@exemplo.com.br,, espaço na borda 
+Ana 106,lead106@exemplo.com.br,"x
+y","emoji 🚀, ok"
+Maria  Clara 107,lead107@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+Bia  108,lead108@exemplo.com.br,"Diz ""oi"" sempre",
+Zoë O'Brien 109,lead109@exemplo.com.br,"linha 1
+linha 2","x
+y"
+"Smith, Jane 110",lead110@exemplo.com.br,,"São Paulo, SP"
+"Joe ""JJ"" Doe 111",lead111@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+José da Silva 112,lead112@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+Ana 113,lead113@exemplo.com.br,"emoji 🚀, ok",
+Maria  Clara 114,lead114@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+Bia  115,lead115@exemplo.com.br,, espaço na borda 
+Zoë O'Brien 116,lead116@exemplo.com.br,"x
+y","emoji 🚀, ok"
+"Smith, Jane 117",lead117@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+"Joe ""JJ"" Doe 118",lead118@exemplo.com.br,"Diz ""oi"" sempre",
+José da Silva 119,lead119@exemplo.com.br,"linha 1
+linha 2","x
+y"
+Ana 120,lead120@exemplo.com.br,,"São Paulo, SP"
+Maria  Clara 121,lead121@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+Bia  122,lead122@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+Zoë O'Brien 123,lead123@exemplo.com.br,"emoji 🚀, ok",
+"Smith, Jane 124",lead124@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo
+"Joe ""JJ"" Doe 125",lead125@exemplo.com.br,, espaço na borda 
+José da Silva 126,lead126@exemplo.com.br,"x
+y","emoji 🚀, ok"
+Ana 127,lead127@exemplo.com.br,"São Paulo, SP",=SUM(A1)
+Maria  Clara 128,lead128@exemplo.com.br,"Diz ""oi"" sempre",
+Bia  129,lead129@exemplo.com.br,"linha 1
+linha 2","x
+y"
+Zoë O'Brien 130,lead130@exemplo.com.br,,"São Paulo, SP"
+"Smith, Jane 131",lead131@exemplo.com.br,Açaí & Pão de Queijo,"Diz ""oi"" sempre"
+"Joe ""JJ"" Doe 132",lead132@exemplo.com.br, espaço na borda ,"linha 1
+linha 2"
+José da Silva 133,lead133@exemplo.com.br,"emoji 🚀, ok",
+Ana 134,lead134@exemplo.com.br,=SUM(A1),Açaí & Pão de Queijo

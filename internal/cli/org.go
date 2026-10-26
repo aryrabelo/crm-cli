@@ -166,7 +166,11 @@ func orgShowCmd() *cobra.Command {
 				data["people"] = peopleToMaps(people)
 			}
 
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{data}, orgColumns, flagQuiet)
+			fields, err := repo.NewCustomFieldRepo(db).GetForEntity(cmd.Context(), "organization", id)
+			if err != nil {
+				return err
+			}
+			return outputWithCustomFields(os.Stdout, resolveFormat(), data, orgColumns, fields)
 		},
 	}
 

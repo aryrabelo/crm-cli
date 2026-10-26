@@ -197,8 +197,11 @@ func personShowCmd() *cobra.Command {
 				return err
 			}
 
-			data := []map[string]any{personToMap(person)}
-			return format.Output(os.Stdout, resolveFormat(), data, personColumns, flagQuiet)
+			fields, err := repo.NewCustomFieldRepo(db).GetForEntity(cmd.Context(), "person", id)
+			if err != nil {
+				return err
+			}
+			return outputWithCustomFields(os.Stdout, resolveFormat(), personToMap(person), personColumns, fields)
 		},
 	}
 }

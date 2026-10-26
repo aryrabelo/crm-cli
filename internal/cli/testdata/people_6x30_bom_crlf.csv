@@ -1,0 +1,39 @@
+﻿Nome,E-mail,Campo 03,Campo 04,Campo 05,Campo 06,Observação,Campo 08,Campo 09,Campo 10,Campo 11,"Last, First",Campo 13,Campo 14,Campo 15,Campo 16,Campo 17,Campo 18,Campo 19,"Apelido ""nick""",Campo 21,Campo 22,Campo 23,Campo 24,Campo 25,Campo 26,Campo 27,Campo 28,Campo 29,Campo 30
+Pessoa Número 1,p1@exemplo.com,,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP"
+Pessoa Número 2,p2@exemplo.com,"São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1)
+Pessoa Número 3,p3@exemplo.com,=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo
+Pessoa Número 4,p4@exemplo.com,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre"
+Pessoa Número 5,p5@exemplo.com,"Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),
+Pessoa Número 6,p6@exemplo.com,,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda ,"emoji 🚀, ok",=SUM(A1),,"x
+y","São Paulo, SP","Diz ""oi"" sempre","linha 1
+linha 2",,Açaí & Pão de Queijo, espaço na borda 
