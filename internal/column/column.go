@@ -1,7 +1,8 @@
 // Package column defines workspace column types and how one column is
 // computed for one row: input cells are stored, formula cells are evaluated
 // on read from a {{column}} template, enrich cells come from a provider
-// waterfall during `crm run`.
+// waterfall and ai cells from an llm answering a {{column}} prompt, both
+// during `crm run`.
 package column
 
 import (
@@ -15,37 +16,48 @@ import (
 	"github.com/jdanielnd/crm-cli/internal/waterfall"
 )
 
-// Type is a column type. The schema also reserves ai, signal and score for
-// later slices; S1 implements these three.
+// Type is a column type. The schema also reserves signal and score for
+// later slices.
 type Type string
 
 const (
 	Input   Type = "input"
 	Formula Type = "formula"
 	Enrich  Type = "enrich"
+	AI      Type = "ai"
 )
 
 // ParseType accepts the column types `crm column add` supports.
 func ParseType(s string) (Type, error) {
 	switch t := Type(s); t {
-	case Input, Formula, Enrich:
+	case Input, Formula, Enrich, AI:
 		return t, nil
 	default:
-		return "", model.NewExitError(model.ErrValidation, "unknown column type %q (use input, formula or enrich)", s)
+		return "", model.NewExitError(model.ErrValidation, "unknown column type %q (use input, formula, enrich or ai)", s)
 	}
 }
+
+// Runnable reports whether `crm run` computes columns of type t.
+func (t Type) Runnable() bool { return t == Enrich || t == AI }
 
 // Config is the type-specific definition of a column.
 type Config struct {
 	// Expr is the formula template: text with {{column}} or {{column.json.path}}.
 	Expr string `json:"expr,omitempty"`
-	// Waterfall is the ordered provider list of an enrich column.
+	// Waterfall is the ordered provider list of an enrich or ai column.
 	Waterfall []string `json:"waterfall,omitempty"`
 	// From is the column whose cell is the enrich input.
 	From string `json:"from,omitempty"`
 	// Field selects the stored value inside the provider answer ("company").
 	// An answer whose field is empty falls through to the next provider.
 	Field string `json:"field,omitempty"`
+	// Prompt is the ai prompt template, with {{column}} placeholders.
+	Prompt string `json:"prompt,omitempty"`
+	// Output is the ai answer type: text, score:MIN-MAX, enum:a|b|c or bool.
+	Output string `json:"output,omitempty"`
+	// Reason is the input column that receives the 1–2 sentence reason the
+	// llm gives with each ai answer (--explain); empty means no reason.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Column is one declared column of a workspace.
@@ -94,16 +106,17 @@ func (c *Column) Validate(columns []*Column) error {
 	if exists(c.Name) {
 		return model.NewExitError(model.ErrConflict, "column %q already exists", c.Name)
 	}
+	aiConfig := c.Config.Prompt != "" || c.Config.Output != "" || c.Config.Reason != ""
 	switch c.Type {
 	case Input:
-		if c.Config.Expr != "" || len(c.Config.Waterfall) > 0 || c.Config.From != "" || c.Config.Field != "" {
-			return model.NewExitError(model.ErrValidation, "input column %q takes no --expr, --waterfall, --from or --field", c.Name)
+		if c.Config.Expr != "" || len(c.Config.Waterfall) > 0 || c.Config.From != "" || c.Config.Field != "" || aiConfig {
+			return model.NewExitError(model.ErrValidation, "input column %q takes no definition flags", c.Name)
 		}
 	case Formula:
 		if c.Config.Expr == "" {
 			return model.NewExitError(model.ErrValidation, "formula column %q needs --expr (e.g. \"{{first}} {{last}}\")", c.Name)
 		}
-		if len(c.Config.Waterfall) > 0 || c.Config.From != "" || c.Config.Field != "" {
+		if len(c.Config.Waterfall) > 0 || c.Config.From != "" || c.Config.Field != "" || aiConfig {
 			return model.NewExitError(model.ErrValidation, "formula column %q takes only --expr", c.Name)
 		}
 		for _, m := range placeholder.FindAllStringSubmatch(c.Config.Expr, -1) {
@@ -115,8 +128,8 @@ func (c *Column) Validate(columns []*Column) error {
 		if len(c.Config.Waterfall) == 0 {
 			return model.NewExitError(model.ErrValidation, "enrich column %q needs --waterfall p1,p2,...", c.Name)
 		}
-		if c.Config.Expr != "" {
-			return model.NewExitError(model.ErrValidation, "enrich column %q takes no --expr", c.Name)
+		if c.Config.Expr != "" || aiConfig {
+			return model.NewExitError(model.ErrValidation, "enrich column %q takes no --expr, --prompt, --output or --explain", c.Name)
 		}
 		if c.Config.From == "" {
 			return model.NewExitError(model.ErrValidation, "enrich column %q needs --from <column> (or a table imported with --key)", c.Name)
@@ -124,6 +137,8 @@ func (c *Column) Validate(columns []*Column) error {
 		if !exists(c.Config.From) {
 			return model.NewExitError(model.ErrValidation, "enrich column %q: --from %q is not a column", c.Name, c.Config.From)
 		}
+	case AI:
+		return c.validateAI(exists, columns)
 	default:
 		return model.NewExitError(model.ErrValidation, "column %q: type %q is not supported yet", c.Name, c.Type)
 	}
@@ -160,13 +175,67 @@ func Materialize(columns []*Column, data map[string]any) map[string]any {
 	return cells
 }
 
-// EnrichInput is the provider input of an enrich column for one row.
-func (c *Column) EnrichInput(cells map[string]any) provider.Input {
+// Input is the provider input of a runnable column for one row: the --from
+// cell of an enrich column, the rendered prompt of an ai column. An empty
+// Value means the row has no input (no call is made).
+func (c *Column) Input(cells map[string]any) provider.Input {
+	if c.Type == AI {
+		return c.aiInput(cells)
+	}
 	return provider.Input{Value: strings.TrimSpace(value.Text(cells[c.Config.From]))}
 }
 
-// Waterfall opens the providers of an enrich column in order.
+// Sources returns the columns a runnable column reads its input from.
+func (c *Column) Sources(columns []*Column) []string {
+	switch c.Type {
+	case Enrich:
+		return []string{c.Config.From}
+	case AI:
+		isColumn := func(n string) bool {
+			for _, o := range columns {
+				if o.Name == n {
+					return true
+				}
+			}
+			return false
+		}
+		var out []string
+		for _, m := range placeholder.FindAllStringSubmatch(c.Config.Prompt, -1) {
+			if name, _, ok := resolveRef(m[1], isColumn); ok {
+				out = append(out, name)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// Cells maps a run answer to the row cells it fills: the column itself and,
+// for an ai column with a reason column, the reason. A nil answer (no data)
+// clears them.
+func (c *Column) Cells(answer any) map[string]any {
+	if c.Type != AI {
+		return map[string]any{c.Name: answer}
+	}
+	obj, _ := answer.(map[string]any)
+	cells := map[string]any{c.Name: obj["value"]}
+	if c.Config.Reason != "" {
+		cells[c.Config.Reason] = obj["reason"]
+	}
+	return cells
+}
+
+// Waterfall opens the providers of a runnable column in order: enrich
+// adapters, or llm providers bound to the ai column's answer contract.
 func (c *Column) Waterfall(ctx context.Context, providers *provider.Store, registry *provider.Registry, cache *waterfall.Cache) (*waterfall.Waterfall, []*provider.Config, error) {
+	var contract provider.Contract
+	if c.Type == AI {
+		var err error
+		if contract, err = c.contract(); err != nil {
+			return nil, nil, err
+		}
+	}
 	wf := &waterfall.Waterfall{Cache: cache}
 	configs := make([]*provider.Config, 0, len(c.Config.Waterfall))
 	for _, name := range c.Config.Waterfall {
@@ -174,21 +243,18 @@ func (c *Column) Waterfall(ctx context.Context, providers *provider.Store, regis
 		if err != nil {
 			return nil, nil, err
 		}
-		a, err := registry.Open(cfg)
-		if err != nil {
+		var a provider.Adapter
+		if c.Type == AI {
+			l, err := registry.OpenLLM(cfg)
+			if err != nil {
+				return nil, nil, err
+			}
+			a = l.Bind(contract)
+		} else if a, err = registry.Open(cfg); err != nil {
 			return nil, nil, err
 		}
 		wf.Steps = append(wf.Steps, waterfall.Step{Name: name, Adapter: a})
 		configs = append(configs, cfg)
 	}
 	return wf, configs, nil
-}
-
-// WorstCost is the cost of calling every provider of the waterfall once.
-func WorstCost(configs []*provider.Config) provider.Cost {
-	var total provider.Cost
-	for _, cfg := range configs {
-		total += cfg.Price
-	}
-	return total
 }

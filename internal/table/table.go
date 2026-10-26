@@ -192,8 +192,42 @@ func (s *Store) AddColumn(ctx context.Context, c *column.Column) error {
 	return nil
 }
 
+// UpdateColumn replaces the definition (config and cost estimate) of an
+// existing column, validated against the other columns. Its type is fixed.
+func (s *Store) UpdateColumn(ctx context.Context, c *column.Column) error {
+	existing, err := s.Columns(ctx, c.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if err := c.Validate(withoutColumn(existing, c.Name)); err != nil {
+		return err
+	}
+	cfg, err := json.Marshal(c.Config)
+	if err != nil {
+		return fmt.Errorf("encode column config: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE workspace_columns SET config = ?, cost_est_micros = ? WHERE id = ? AND type = ?",
+		string(cfg), c.CostEst, c.ID, c.Type); err != nil {
+		return fmt.Errorf("update column %s: %w", c.Name, err)
+	}
+	return nil
+}
+
+// SwapPositions exchanges the display order of two columns of a workspace.
+func (s *Store) SwapPositions(ctx context.Context, a, b *column.Column) error {
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE workspace_columns SET position = CASE id WHEN ? THEN ? ELSE ? END WHERE id IN (?, ?)",
+		a.ID, b.Position, a.Position, a.ID, b.ID); err != nil {
+		return fmt.Errorf("reorder columns %s, %s: %w", a.Name, b.Name, err)
+	}
+	a.Position, b.Position = b.Position, a.Position
+	return nil
+}
+
 // RemoveColumn archives a column. Cell values stay in the rows. A column
-// that another column reads (enrich --from, formula {{ref}}) cannot be removed.
+// that another column reads (enrich --from, formula or ai prompt {{ref}}, ai
+// reason column) cannot be removed.
 func (s *Store) RemoveColumn(ctx context.Context, w *Workspace, name string) error {
 	cols, err := s.Columns(ctx, w.ID)
 	if err != nil {
@@ -218,10 +252,10 @@ func (s *Store) RemoveColumn(ctx context.Context, w *Workspace, name string) err
 		if c.Type == column.Enrich && c.Config.From == name {
 			return model.NewExitError(model.ErrConflict, "column %q is the --from of column %q", name, c.Name)
 		}
-		if c.Type == column.Formula {
-			probe := column.Column{Name: c.Name, Type: column.Formula, Config: c.Config}
+		if c.Type == column.Formula || c.Type == column.AI {
+			probe := column.Column{Name: c.Name, Type: c.Type, Config: c.Config}
 			if probe.Validate(withoutColumn(others, c.Name)) != nil {
-				return model.NewExitError(model.ErrConflict, "column %q is used by formula %q", name, c.Name)
+				return model.NewExitError(model.ErrConflict, "column %q is used by %s column %q", name, c.Type, c.Name)
 			}
 		}
 	}
@@ -276,8 +310,8 @@ func (s *Store) Rows(ctx context.Context, workspaceID int64) ([]*Row, error) {
 	return out, nil
 }
 
-// SetCell writes one cell of a row (read-modify-write of the data object).
-func (s *Store) SetCell(ctx context.Context, rowID int64, name string, v any) error {
+// SetCells writes cells of a row (read-modify-write of the data object).
+func (s *Store) SetCells(ctx context.Context, rowID int64, values map[string]any) error {
 	var data string
 	if err := s.db.QueryRowContext(ctx, "SELECT data FROM workspace_rows WHERE id = ?", rowID).Scan(&data); err != nil {
 		return fmt.Errorf("read row %d: %w", rowID, err)
@@ -286,7 +320,9 @@ func (s *Store) SetCell(ctx context.Context, rowID int64, name string, v any) er
 	if err := json.Unmarshal([]byte(data), &cells); err != nil {
 		return fmt.Errorf("row %d: decode data: %w", rowID, err)
 	}
-	cells[name] = v
+	for name, v := range values {
+		cells[name] = v
+	}
 	enc, err := json.Marshal(cells)
 	if err != nil {
 		return fmt.Errorf("row %d: encode data: %w", rowID, err)

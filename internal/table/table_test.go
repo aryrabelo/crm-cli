@@ -42,7 +42,7 @@ func TestImport_KeepsOrderAndUpsertsByKey(t *testing.T) {
 
 	ws, err := s.FindWorkspace(ctx, "leads")
 	require.NoError(t, err)
-	require.NoError(t, s.SetCell(ctx, mustRows(t, s, ws.ID)[1].ID, "profile", map[string]any{"company": "Acme"}))
+	require.NoError(t, s.SetCells(ctx, mustRows(t, s, ws.ID)[1].ID, map[string]any{"profile": map[string]any{"company": "Acme"}}))
 
 	res, err = s.Import(ctx, table.ImportOptions{Name: "leads"}, parse(t, "login,score,city\namy,90,Rio\ncy,50,SP\n"))
 	require.NoError(t, err)

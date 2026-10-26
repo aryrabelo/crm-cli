@@ -44,6 +44,8 @@ type Stats struct {
 	Pending    int            `json:"pending"`
 	CacheHits  int            `json:"cache_hits"`
 	Calls      int            `json:"calls"`
+	TokensIn   int64          `json:"tokens_in"`
+	TokensOut  int64          `json:"tokens_out"`
 	DurationMS int64          `json:"duration_ms"`
 	Providers  map[string]int `json:"providers"`
 }
@@ -80,6 +82,9 @@ type Item struct {
 	Error       *string       `json:"error"`
 	MS          int64         `json:"ms"`
 	Cost        provider.Cost `json:"-"`
+	// TokensIn and TokensOut are the llm tokens of the calls made (ai columns).
+	TokensIn  int64 `json:"tokens_in"`
+	TokensOut int64 `json:"tokens_out"`
 }
 
 // Store persists runs and run items.
@@ -177,7 +182,7 @@ func (s *Store) List(ctx context.Context) ([]*Run, error) {
 // skipped) are returned.
 func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item, error) {
 	q := `SELECT i.id, i.run_id, i.row_id, wr.position, i.column_id, c.name, i.status, i.attempts, i.calls,
-		i.value, i.provider, i.cache_hit, i.error, i.ms, i.cost_micros
+		i.value, i.provider, i.cache_hit, i.error, i.ms, i.cost_micros, i.tokens_in, i.tokens_out
 		FROM run_items i
 		JOIN workspace_rows wr ON wr.id = i.row_id
 		JOIN workspace_columns c ON c.id = i.column_id
@@ -195,7 +200,8 @@ func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item,
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.RunID, &it.RowID, &it.RowPosition, &it.ColumnID, &it.Column, &it.Status,
-			&it.Attempts, &it.Calls, &it.Value, &it.Provider, &it.CacheHit, &it.Error, &it.MS, &it.Cost); err != nil {
+			&it.Attempts, &it.Calls, &it.Value, &it.Provider, &it.CacheHit, &it.Error, &it.MS, &it.Cost,
+			&it.TokensIn, &it.TokensOut); err != nil {
 			return nil, fmt.Errorf("scan run item: %w", err)
 		}
 		out = append(out, &it)
@@ -211,9 +217,11 @@ func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item,
 func (s *Store) SaveItem(ctx context.Context, it *Item) error {
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE run_items SET status = ?, attempts = attempts + ?, calls = calls + ?, value = ?, provider = ?,
-		   cache_hit = ?, error = ?, ms = ?, cost_micros = cost_micros + ?, updated_at = datetime('now')
+		   cache_hit = ?, error = ?, ms = ?, cost_micros = cost_micros + ?, tokens_in = tokens_in + ?,
+		   tokens_out = tokens_out + ?, updated_at = datetime('now')
 		 WHERE id = ?`,
-		it.Status, it.Attempts, it.Calls, it.Value, it.Provider, it.CacheHit, it.Error, it.MS, it.Cost, it.ID); err != nil {
+		it.Status, it.Attempts, it.Calls, it.Value, it.Provider, it.CacheHit, it.Error, it.MS, it.Cost,
+		it.TokensIn, it.TokensOut, it.ID); err != nil {
 		return fmt.Errorf("save run item %d: %w", it.ID, err)
 	}
 	if it.Cost != 0 {
@@ -230,7 +238,7 @@ func (s *Store) SaveItem(ctx context.Context, it *Item) error {
 func (s *Store) Stats(ctx context.Context, runID int64) (Stats, error) {
 	st := Stats{Providers: map[string]int{}}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT status, COALESCE(provider, ''), COUNT(*), SUM(cache_hit), SUM(calls)
+		`SELECT status, COALESCE(provider, ''), COUNT(*), SUM(cache_hit), SUM(calls), SUM(tokens_in), SUM(tokens_out)
 		 FROM run_items WHERE run_id = ? GROUP BY status, provider`, runID)
 	if err != nil {
 		return st, fmt.Errorf("run %d stats: %w", runID, err)
@@ -239,12 +247,15 @@ func (s *Store) Stats(ctx context.Context, runID int64) (Stats, error) {
 	for rows.Next() {
 		var status, prov string
 		var n, hits, calls int
-		if err := rows.Scan(&status, &prov, &n, &hits, &calls); err != nil {
+		var tokIn, tokOut int64
+		if err := rows.Scan(&status, &prov, &n, &hits, &calls, &tokIn, &tokOut); err != nil {
 			return st, fmt.Errorf("scan run stats: %w", err)
 		}
 		st.Items += n
 		st.CacheHits += hits
 		st.Calls += calls
+		st.TokensIn += tokIn
+		st.TokensOut += tokOut
 		switch status {
 		case ItemOK:
 			st.OK += n

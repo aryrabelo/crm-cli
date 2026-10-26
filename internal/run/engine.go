@@ -49,6 +49,13 @@ type Options struct {
 	// Resume continues run Resume instead of starting a new run; only items
 	// that are not done (pending, failed, skipped) are processed.
 	Resume int64
+	// Only restricts a new run to the rows matching every filter expression
+	// (same syntax as table show --only).
+	Only []string
+	// Preview holds column definitions that are not saved yet; Estimate
+	// treats them as if they were (a new column replaces nothing, an existing
+	// name is redefined). Execute rejects it: save the columns first.
+	Preview []*column.Column
 }
 
 // Engine runs and estimates batch runs.
@@ -78,7 +85,7 @@ type plan struct {
 	limiters map[string]*provider.Limiter
 }
 
-func (e *Engine) prepare(ctx context.Context, tableName string, names []string) (*plan, error) {
+func (e *Engine) prepare(ctx context.Context, tableName string, names, only []string, preview []*column.Column) (*plan, error) {
 	ts := table.NewStore(e.db)
 	ws, err := ts.FindWorkspace(ctx, tableName)
 	if err != nil {
@@ -88,8 +95,19 @@ func (e *Engine) prepare(ctx context.Context, tableName string, names []string) 
 	if err != nil {
 		return nil, err
 	}
+	for _, pc := range preview {
+		if i := slices.IndexFunc(cols, func(c *column.Column) bool { return c.Name == pc.Name }); i >= 0 {
+			cols[i] = pc
+		} else {
+			cols = append(cols, pc)
+		}
+	}
 	if len(names) == 0 {
-		return nil, model.NewExitError(model.ErrValidation, "--columns is required (enrich columns of table %s)", ws.Name)
+		return nil, model.NewExitError(model.ErrValidation, "--columns is required (enrich or ai columns of table %s)", ws.Name)
+	}
+	filters, err := table.ParseFilters(only, cols)
+	if err != nil {
+		return nil, err
 	}
 	p := &plan{ws: ws, columns: cols, byColumn: map[int64]*target{}, limiters: map[string]*provider.Limiter{}}
 	providers := provider.NewStore(e.db)
@@ -103,9 +121,9 @@ func (e *Engine) prepare(ctx context.Context, tableName string, names []string) 
 			return nil, model.NewExitError(model.ErrNotFound, "table %s has no column %q", ws.Name, name)
 		}
 		c := cols[idx]
-		if c.Type != column.Enrich {
+		if !c.Type.Runnable() {
 			return nil, model.NewExitError(model.ErrValidation,
-				"column %q is %s: only enrich columns run (input is imported, formula is computed on read)", name, c.Type)
+				"column %q is %s: only enrich and ai columns run (input is imported, formula is computed on read)", name, c.Type)
 		}
 		wf, configs, err := c.Waterfall(ctx, providers, e.registry, cache)
 		if err != nil {
@@ -116,13 +134,16 @@ func (e *Engine) prepare(ctx context.Context, tableName string, names []string) 
 				p.limiters[cfg.Name] = provider.NewLimiter(cfg.Rate)
 			}
 		}
-		t := &target{col: c, wf: wf, dependent: slices.Contains(names[:i], c.Config.From)}
+		dependent := slices.ContainsFunc(c.Sources(cols), func(src string) bool { return slices.Contains(names[:i], src) })
+		t := &target{col: c, wf: wf, dependent: dependent}
 		p.targets = append(p.targets, t)
 		p.byColumn[c.ID] = t
 	}
-	if p.rows, err = ts.Rows(ctx, ws.ID); err != nil {
+	rows, err := ts.Rows(ctx, ws.ID)
+	if err != nil {
 		return nil, err
 	}
+	p.rows = table.NewView(cols, rows, filters).Rows
 	return p, nil
 }
 
@@ -154,6 +175,9 @@ func (e *Engine) Estimate(ctx context.Context, opts Options) (*Estimate, error) 
 	names := opts.Columns
 	var open map[int64]map[int64]bool // row → column → open
 	if opts.Resume != 0 {
+		if len(opts.Only) > 0 || len(opts.Preview) > 0 {
+			return nil, model.NewExitError(model.ErrValidation, "a resumed run keeps its rows and columns: drop --only")
+		}
 		r, items, err := e.openItems(ctx, opts.Resume)
 		if err != nil {
 			return nil, err
@@ -168,7 +192,7 @@ func (e *Engine) Estimate(ctx context.Context, opts Options) (*Estimate, error) 
 			open[it.RowID][it.ColumnID] = true
 		}
 	}
-	p, err := e.prepare(ctx, opts.Table, names)
+	p, err := e.prepare(ctx, opts.Table, names, opts.Only, opts.Preview)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +219,7 @@ func (p *plan) estimate(ctx context.Context, open map[int64]map[int64]bool) (*Es
 			}
 			ce := est.Columns[i]
 			ce.Items++
-			in := t.col.EnrichInput(cells)
+			in := t.col.Input(cells)
 			if in.Value == "" && !t.dependent {
 				ce.NoInput++
 				continue
@@ -258,6 +282,12 @@ func (e *Engine) Execute(ctx context.Context, opts Options) (*Result, error) {
 		opts.Backoff = DefaultBackoff
 	}
 
+	if len(opts.Preview) > 0 {
+		return nil, model.NewExitError(model.ErrValidation, "preview columns can only be estimated; save them before running")
+	}
+	if opts.Resume != 0 && len(opts.Only) > 0 {
+		return nil, model.NewExitError(model.ErrValidation, "a resumed run keeps its rows and columns: drop --only")
+	}
 	rs := NewStore(e.db)
 	var r *Run
 	var p *plan
@@ -266,7 +296,7 @@ func (e *Engine) Execute(ctx context.Context, opts Options) (*Result, error) {
 		if r, err = rs.Get(ctx, opts.Resume); err != nil {
 			return nil, err
 		}
-		if p, err = e.prepare(ctx, r.Table, r.Columns); err != nil {
+		if p, err = e.prepare(ctx, r.Table, r.Columns, nil, nil); err != nil {
 			return nil, err
 		}
 		if opts.BudgetSet {
@@ -276,7 +306,7 @@ func (e *Engine) Execute(ctx context.Context, opts Options) (*Result, error) {
 			return nil, err
 		}
 	} else {
-		if p, err = e.prepare(ctx, opts.Table, opts.Columns); err != nil {
+		if p, err = e.prepare(ctx, opts.Table, opts.Columns, opts.Only, nil); err != nil {
 			return nil, err
 		}
 		est, err := p.estimate(ctx, nil)
@@ -468,17 +498,19 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 		}
 		t := w.plan.byColumn[it.ColumnID]
 		start := time.Now()
-		in := t.col.EnrichInput(column.Materialize(w.plan.columns, data))
+		in := t.col.Input(column.Materialize(w.plan.columns, data))
 
 		it.Attempts, it.Calls, it.Cost, it.CacheHit = 0, 0, 0, false
+		it.TokensIn, it.TokensOut = 0, 0
 		it.Value, it.Provider, it.Error = nil, nil, nil
-		writeCell := false
-		var cell any
+		var cells map[string]any // nil: no cell is written
 		if in.Value == "" {
 			it.Status = ItemEmpty
-			writeCell = true
+			cells = t.col.Cells(nil)
 		} else {
-			res, err := t.wf.Run(ctx, in, t.col.Config.Field, w.call)
+			callCtx, usage := provider.WithUsage(ctx)
+			res, err := t.wf.Run(callCtx, in, t.col.Config.Field, w.call)
+			it.TokensIn, it.TokensOut = usage.Tokens()
 			it.Attempts, it.Calls, it.Cost, it.CacheHit = res.Attempts, res.Calls, res.Cost, res.CacheHit
 			switch {
 			case errors.Is(err, ErrBudgetExhausted):
@@ -497,13 +529,13 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 				it.Status = ItemOK
 				it.Value = ptr(string(enc))
 				it.Provider = ptr(res.Provider)
-				writeCell, cell = true, res.Value
+				cells = t.col.Cells(res.Value)
 			case len(res.Errors) > 0:
 				it.Status = ItemFailed
 				it.Error = ptr(strings.Join(res.Errors, "; "))
 			default:
 				it.Status = ItemEmpty
-				writeCell = true
+				cells = t.col.Cells(nil)
 			}
 		}
 		it.MS = time.Since(start).Milliseconds()
@@ -513,16 +545,16 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 			if err := NewStore(tx).SaveItem(bg, it); err != nil {
 				return err
 			}
-			if writeCell {
-				return table.NewStore(tx).SetCell(bg, job.row.ID, t.col.Name, cell)
+			if cells != nil {
+				return table.NewStore(tx).SetCells(bg, job.row.ID, cells)
 			}
 			return nil
 		})
 		if err != nil {
 			return err
 		}
-		if writeCell {
-			data[t.col.Name] = cell
+		for name, v := range cells {
+			data[name] = v
 		}
 	}
 	return nil
