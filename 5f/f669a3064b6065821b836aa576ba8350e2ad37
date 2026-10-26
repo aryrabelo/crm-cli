@@ -1,0 +1,30 @@
+go.mod
+  h_b156936c57c455 7,13
+internal/bench/fakes.go
+  h_b156936c57c455 1-140
+internal/cli/mcp.go
+  h_b156936c57c455 4-7,9,13-15,21-23,25-27,29-40,42-56,62-73,75-78
+internal/cli/mcp_test.go
+  h_b156936c57c455 16-36
+internal/mcp/batch.go
+  h_b156936c57c455 1-529
+internal/mcp/batch_test.go
+  h_b156936c57c455 1-392
+internal/mcp/serve.go
+  h_b156936c57c455 1-145
+internal/mcp/server.go
+  h_b156936c57c455 17-19
+internal/mcp/server_test.go
+  h_b156936c57c455 21-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ff669a3064b6065821b836aa576ba8350e2ad37",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
