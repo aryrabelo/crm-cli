@@ -1,0 +1,18 @@
+{
+  "name": "pipeline-import-qualify-push-export",
+  "description": "From a raw CSV of 20 companies to CRM organizations for the qualified ones, plus an export of them.",
+  "setup": {},
+  "batch": {
+    "steps": [
+      {"tool": "crm_table_import", "args": {"table": "leads", "key": "company", "csv": "{{file:fixtures/leads_20.csv}}"}},
+      {"tool": "crm_qualify", "args": {"table": "leads", "criteria": "{{file:fixtures/icp.md}}", "budget": 0.1}},
+      {"tool": "crm_push_dedupe", "args": {"table": "leads", "to": "org", "dedupe": "domain", "filters": ["qualified=yes"]}},
+      {"tool": "crm_export", "args": {"table": "leads", "filters": ["qualified=yes"], "columns": ["company", "domain"]}}
+    ],
+    "checks": [
+      {"sql": "SELECT COUNT(*) FROM organizations WHERE archived = 0", "equals": 9},
+      {"result": -1, "path": "rows", "equals": 9}
+    ]
+  },
+  "per_entity_na": "the one-entity tools have no tables or llm columns"
+}

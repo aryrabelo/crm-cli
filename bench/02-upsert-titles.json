@@ -1,0 +1,28 @@
+{
+  "name": "update-20-titles",
+  "description": "Set the title of 20 existing leads, matched by email.",
+  "setup": {
+    "table": {"name": "leads", "csv": "fixtures/people_135.csv", "key": "email"},
+    "entities": {"type": "person", "csv": "fixtures/people_135.csv"}
+  },
+  "batch": {
+    "steps": [
+      {"tool": "crm_rows_upsert_many", "args": {"table": "leads", "rows": "{{rows:fixtures/titles_20.csv}}"}}
+    ],
+    "checks": [
+      {"sql": "SELECT COUNT(*) FROM workspace_rows WHERE json_extract(data, '$.title') = 'VP Sales'", "equals": 20},
+      {"sql": "SELECT COUNT(*) FROM workspace_rows", "equals": 135}
+    ]
+  },
+  "per_entity": {
+    "steps": [
+      {"foreach": "fixtures/titles_20.csv", "calls": [
+        {"tool": "crm_person_search", "args": {"query": "{{row.email}}", "limit": 1}},
+        {"tool": "crm_person_update", "args": {"id": "{{last.0.id}}", "title": "{{row.title}}"}}
+      ]}
+    ],
+    "checks": [
+      {"sql": "SELECT COUNT(*) FROM people WHERE title = 'VP Sales'", "equals": 20}
+    ]
+  }
+}
