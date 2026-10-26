@@ -1,0 +1,28 @@
+internal/column/column.go
+  h_b156936c57c455 1-194
+internal/column/column_test.go
+  h_b156936c57c455 1-54
+internal/table/filter.go
+  h_b156936c57c455 1-172
+internal/table/import.go
+  h_b156936c57c455 1-166
+internal/table/table.go
+  h_b156936c57c455 1-299
+internal/table/table_test.go
+  h_b156936c57c455 1-158
+internal/waterfall/waterfall.go
+  h_b156936c57c455 1-219
+internal/waterfall/waterfall_test.go
+  h_b156936c57c455 1-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "41e59c031685bb2561f6d32a0997bc87e3b1bc03",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
