@@ -2,7 +2,9 @@ package provider
 
 import (
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/model"
 )
@@ -17,6 +19,12 @@ type Registry struct {
 // base URL overrides; pass os.Getenv in production.
 func NewRegistry(client *http.Client, getenv func(string) string) *Registry {
 	return &Registry{client: client, getenv: getenv}
+}
+
+// NewEnvRegistry is the production Registry: real HTTP with a 30s
+// per-request timeout, credentials and URL overrides from the environment.
+func NewEnvRegistry() *Registry {
+	return NewRegistry(&http.Client{Timeout: 30 * time.Second}, os.Getenv)
 }
 
 // URLOverrideEnv is the environment variable that overrides the base URL (or,

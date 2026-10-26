@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +11,7 @@ import (
 	"github.com/jdanielnd/crm-cli/internal/csvio"
 	"github.com/jdanielnd/crm-cli/internal/format"
 	"github.com/jdanielnd/crm-cli/internal/model"
+	"github.com/jdanielnd/crm-cli/internal/service"
 	"github.com/jdanielnd/crm-cli/internal/table"
 	"github.com/spf13/cobra"
 )
@@ -94,17 +93,9 @@ import of a table.`,
 				return err
 			}
 			defer db.Close()
-			tx, err := db.BeginTx(cmd.Context(), nil)
-			if err != nil {
-				return fmt.Errorf("begin import: %w", err)
-			}
-			defer func() { _ = tx.Rollback() }()
-			res, err := table.NewStore(tx).Import(cmd.Context(), table.ImportOptions{Name: as, Key: key, Source: source}, parsed)
+			res, err := newService(db).ImportCSV(cmd.Context(), table.ImportOptions{Name: as, Key: key, Source: source}, parsed)
 			if err != nil {
 				return err
-			}
-			if err := tx.Commit(); err != nil {
-				return fmt.Errorf("commit import: %w", err)
 			}
 			out := map[string]any{
 				"id":          res.Workspace.ID,
@@ -168,24 +159,7 @@ func loadView(cmd *cobra.Command, name string, only []string) (*table.Workspace,
 		return nil, nil, err
 	}
 	defer db.Close()
-	ts := table.NewStore(db)
-	ws, err := ts.FindWorkspace(cmd.Context(), name)
-	if err != nil {
-		return nil, nil, err
-	}
-	cols, err := ts.Columns(cmd.Context(), ws.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	filters, err := table.ParseFilters(only, cols)
-	if err != nil {
-		return nil, nil, err
-	}
-	rows, err := ts.Rows(cmd.Context(), ws.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return ws, table.NewView(cols, rows, filters), nil
+	return newService(db).View(cmd.Context(), name, only)
 }
 
 const onlyHelp = `keep rows matching <column><op><value>; op is = != > >= < <= ~ (regex) !~; repeatable (AND). "col!=" keeps non-empty cells`
@@ -249,54 +223,9 @@ in column order.`,
 			if err != nil {
 				return err
 			}
-			switch flagFormat {
-			case "", "csv":
-				return csvio.Write(os.Stdout, ',', view.Header(), view.Records(), csvio.DefaultDialect)
-			case "tsv":
-				return csvio.Write(os.Stdout, '\t', view.Header(), view.Records(), csvio.DefaultDialect)
-			case "json":
-				return writeOrderedJSON(os.Stdout, view)
-			default:
-				return model.NewExitError(model.ErrValidation, "table export supports -f csv, tsv or json")
-			}
+			return service.Export(os.Stdout, view, flagFormat)
 		},
 	}
 	cmd.Flags().StringArrayVar(&only, "only", nil, onlyHelp)
 	return cmd
-}
-
-// writeOrderedJSON writes the rows as a JSON array of objects whose keys
-// follow the column order.
-func writeOrderedJSON(w io.Writer, view *table.View) error {
-	var buf bytes.Buffer
-	buf.WriteString("[")
-	for i, cells := range view.Cells {
-		if i > 0 {
-			buf.WriteString(",")
-		}
-		buf.WriteString("\n  {")
-		for j, c := range view.Columns {
-			if j > 0 {
-				buf.WriteString(", ")
-			}
-			k, err := json.Marshal(c.Name)
-			if err != nil {
-				return err
-			}
-			v, err := json.Marshal(cells[c.Name])
-			if err != nil {
-				return fmt.Errorf("encode %s: %w", c.Name, err)
-			}
-			buf.Write(k)
-			buf.WriteString(": ")
-			buf.Write(v)
-		}
-		buf.WriteString("}")
-	}
-	if len(view.Cells) > 0 {
-		buf.WriteString("\n")
-	}
-	buf.WriteString("]\n")
-	_, err := w.Write(buf.Bytes())
-	return err
 }

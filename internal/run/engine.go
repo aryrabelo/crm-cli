@@ -305,27 +305,8 @@ func (e *Engine) Execute(ctx context.Context, opts Options) (*Result, error) {
 		if err := rs.SetBudget(ctx, r.ID, r.Budget); err != nil {
 			return nil, err
 		}
-	} else {
-		if p, err = e.prepare(ctx, opts.Table, opts.Columns, opts.Only, nil); err != nil {
-			return nil, err
-		}
-		est, err := p.estimate(ctx, nil)
-		if err != nil {
-			return nil, err
-		}
-		if !opts.BudgetSet && est.Total.Worst > 0 {
-			return nil, model.NewExitError(model.ErrValidation,
-				"this run may spend up to %s (expected %s); set --budget USD (preview with --dry-run)",
-				est.Total.Worst, est.Total.Expected)
-		}
-		r = &Run{WorkspaceID: p.ws.ID, Table: p.ws.Name, Columns: opts.Columns, Budget: opts.Budget}
-		colIDs := make([]int64, len(p.targets))
-		for i, t := range p.targets {
-			colIDs[i] = t.col.ID
-		}
-		if err := e.inTx(ctx, func(tx *sql.Tx) error { return NewStore(tx).Create(ctx, r, p.rows, colIDs) }); err != nil {
-			return nil, err
-		}
+	} else if r, p, err = e.create(ctx, opts); err != nil {
+		return nil, err
 	}
 
 	items, err := rs.Items(ctx, r.ID, true)
@@ -409,6 +390,44 @@ func (e *Engine) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
+}
+
+// create prepares a new run, refuses a run that may spend money without a
+// budget, and inserts the run with one pending item per row × column.
+func (e *Engine) create(ctx context.Context, opts Options) (*Run, *plan, error) {
+	p, err := e.prepare(ctx, opts.Table, opts.Columns, opts.Only, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	est, err := p.estimate(ctx, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !opts.BudgetSet && est.Total.Worst > 0 {
+		return nil, nil, model.NewExitError(model.ErrValidation,
+			"this run may spend up to %s (expected %s); set --budget USD (preview with --dry-run)",
+			est.Total.Worst, est.Total.Expected)
+	}
+	r := &Run{WorkspaceID: p.ws.ID, Table: p.ws.Name, Columns: opts.Columns, Budget: opts.Budget}
+	colIDs := make([]int64, len(p.targets))
+	for i, t := range p.targets {
+		colIDs[i] = t.col.ID
+	}
+	if err := e.inTx(ctx, func(tx *sql.Tx) error { return NewStore(tx).Create(ctx, r, p.rows, colIDs) }); err != nil {
+		return nil, nil, err
+	}
+	return r, p, nil
+}
+
+// Start creates a new run without processing it: every item is pending and
+// the run is "running". Execute with Options.Resume set to the run's ID
+// processes it (typically on another goroutine, while callers poll the store).
+func (e *Engine) Start(ctx context.Context, opts Options) (*Run, error) {
+	if opts.Resume != 0 || len(opts.Preview) > 0 {
+		return nil, model.NewExitError(model.ErrValidation, "Start creates a new run: drop the resume run and preview columns")
+	}
+	r, _, err := e.create(ctx, opts)
+	return r, err
 }
 
 type rowJob struct {

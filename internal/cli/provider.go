@@ -1,24 +1,25 @@
 package cli
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
 	"os"
-	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/format"
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/jdanielnd/crm-cli/internal/provider"
+	"github.com/jdanielnd/crm-cli/internal/service"
 	"github.com/spf13/cobra"
 )
 
-// newRegistry builds the provider registry used by commands: real HTTP with
-// a per-request timeout, credentials and URL overrides from the environment.
-func newRegistry() *provider.Registry {
-	return provider.NewRegistry(&http.Client{Timeout: 30 * time.Second}, os.Getenv)
+// newService builds the data-plane service used by commands, with the
+// production provider registry (credentials and URL overrides from the
+// environment).
+func newService(db *sql.DB) *service.Service {
+	return service.New(db, provider.NewEnvRegistry())
 }
 
 func registerProviderCommands(rootCmd *cobra.Command) {

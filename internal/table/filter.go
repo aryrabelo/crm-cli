@@ -158,6 +158,26 @@ func (v *View) Header() []string {
 	return h
 }
 
+// Project returns the view restricted to the named columns, in that order.
+// No names keeps every column.
+func (v *View) Project(names []string) (*View, error) {
+	if len(names) == 0 {
+		return v, nil
+	}
+	cols := make([]*column.Column, len(names))
+	for i, n := range names {
+		j := slices.IndexFunc(v.Columns, func(c *column.Column) bool { return c.Name == n })
+		if j < 0 {
+			return nil, model.NewExitError(model.ErrValidation, "no column named %q", n)
+		}
+		if slices.Contains(names[:i], n) {
+			return nil, model.NewExitError(model.ErrValidation, "column %q is listed twice", n)
+		}
+		cols[i] = v.Columns[j]
+	}
+	return &View{Columns: cols, Rows: v.Rows, Cells: v.Cells}, nil
+}
+
 // Records renders every kept row as text cells (CSV/TSV/table output).
 func (v *View) Records() [][]string {
 	out := make([][]string, len(v.Cells))
