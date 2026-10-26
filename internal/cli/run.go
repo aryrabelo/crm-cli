@@ -31,6 +31,8 @@ var runSummaryColumns = []format.ColumnDef{
 	{Header: "Skipped", Field: "skipped"},
 	{Header: "Cache Hits", Field: "cache_hits"},
 	{Header: "Calls", Field: "calls"},
+	{Header: "Tokens In", Field: "tokens_in"},
+	{Header: "Tokens Out", Field: "tokens_out"},
 	{Header: "Spent", Field: "spent"},
 	{Header: "Budget", Field: "budget"},
 	{Header: "Duration", Field: "duration"},
@@ -62,6 +64,8 @@ func runData(r *run.Run) map[string]any {
 		"pending":     st.Pending,
 		"cache_hits":  st.CacheHits,
 		"calls":       st.Calls,
+		"tokens_in":   st.TokensIn,
+		"tokens_out":  st.TokensOut,
 		"providers":   st.Providers,
 		"spent":       r.Spent.String(),
 		"spent_usd":   r.Spent.USD(),
@@ -88,8 +92,36 @@ func estimateData(ce *run.ColumnEstimate) map[string]any {
 	}
 }
 
+// printEstimate reports a dry run: a summary line on stderr, the per-column
+// estimate on stdout.
+func printEstimate(est *run.Estimate, opts run.Options) error {
+	data := make([]map[string]any, 0, len(est.Columns)+1)
+	for _, ce := range est.Columns {
+		data = append(data, estimateData(ce))
+	}
+	data = append(data, estimateData(&est.Total))
+	t := est.Total
+	fmt.Fprintf(os.Stderr, "dry run on %s: %d items, %d cache hits, %d without input, %d to call — est. %s (worst case %s); nothing written\n",
+		est.Table, t.Items, t.CacheHits, t.NoInput, t.Calls, t.Expected, t.Worst)
+	if opts.BudgetSet && t.Worst > opts.Budget {
+		fmt.Fprintf(os.Stderr, "budget %s may not cover the worst case; items that do not fit will be skipped (resumable)\n", opts.Budget)
+	}
+	return format.Output(os.Stdout, resolveFormat(), data, estimateColumns, false)
+}
+
+// printRunLine reports a finished run invocation on stderr.
+func printRunLine(res *run.Result) {
+	r, st := res.Run, res.Run.Stats
+	fmt.Fprintf(os.Stderr, "run %d %s in %s: %d items — ok %d, empty %d, failed %d, skipped %d, pending %d · cache hits %d · calls %d · tokens in %d / out %d · spent %s of %s budget\n",
+		r.ID, r.Status, res.Duration.Round(time.Millisecond), st.Items, st.OK, st.Empty, st.Failed, st.Skipped, st.Pending,
+		st.CacheHits, st.Calls, st.TokensIn, st.TokensOut, r.Spent, r.Budget)
+	if st.Skipped > 0 || st.Pending > 0 || st.Failed > 0 {
+		fmt.Fprintf(os.Stderr, "resume with: crm run --resume %d [--budget USD]   (details: crm run show %d --items)\n", r.ID, r.ID)
+	}
+}
+
 func runCmd() *cobra.Command {
-	var columns []string
+	var columns, only []string
 	var concurrency, retry int
 	var budget string
 	var dryRun bool
@@ -97,19 +129,22 @@ func runCmd() *cobra.Command {
 	var resume int64
 	cmd := &cobra.Command{
 		Use:   "run <table> --columns a,b",
-		Short: "Fill enrich columns in batch (waterfall, cache, budget, resume)",
-		Long: `Fill enrich columns for every row of a table.
+		Short: "Fill enrich and ai columns in batch (waterfall, cache, budget, resume)",
+		Long: `Fill enrich and ai columns for every row of a table (or the rows matching --only).
 
 Each row × column goes through the column's provider waterfall: cached answers
 are used first (cost 0), then providers are called in order until one answers
 with a non-empty value. Retryable errors (429, 5xx, timeouts) are retried with
 exponential backoff. The budget is a hard cap: a call is only made after its
 price is reserved, so the run never spends more than --budget; items that do
-not fit are marked skipped. --budget is required when the run may spend money
+not fit are marked skipped. ai columns reserve their worst case (prompt bound
+plus max tokens, twice for the one JSON repair retry) and are charged the
+tokens the provider reports. --budget is required when the run may spend money
 (see --dry-run). Every item is checkpointed: --resume <run-id> continues a run,
 re-trying pending, failed and skipped items (with a new --budget, if given).`,
 		Example: `  crm run leads --columns company --dry-run
-  crm run leads --columns company,site --concurrency 8 --budget 2.00
+  crm run leads --columns company,fit --concurrency 8 --budget 2.00
+  crm run leads --columns fit --only "company!=" --budget 0.50
   crm run --resume 3 --budget 5`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -119,10 +154,11 @@ re-trying pending, failed and skipped items (with a new --budget, if given).`,
 				Retry:       retry,
 				Backoff:     backoffBase,
 				Resume:      resume,
+				Only:        only,
 			}
 			switch {
-			case resume != 0 && (len(args) > 0 || len(columns) > 0):
-				return model.NewExitError(model.ErrValidation, "--resume takes the table and columns from the run; drop <table> and --columns")
+			case resume != 0 && (len(args) > 0 || len(columns) > 0 || len(only) > 0):
+				return model.NewExitError(model.ErrValidation, "--resume takes the table, columns and rows from the run; drop <table>, --columns and --only")
 			case resume == 0 && len(args) == 0:
 				return model.NewExitError(model.ErrValidation, "table is required: crm run <table> --columns a,b")
 			case resume == 0:
@@ -151,36 +187,20 @@ re-trying pending, failed and skipped items (with a new --budget, if given).`,
 				if err != nil {
 					return err
 				}
-				data := make([]map[string]any, 0, len(est.Columns)+1)
-				for _, ce := range est.Columns {
-					data = append(data, estimateData(ce))
-				}
-				data = append(data, estimateData(&est.Total))
-				t := est.Total
-				fmt.Fprintf(os.Stderr, "dry run on %s: %d items, %d cache hits, %d without input, %d to call — est. %s (worst case %s); nothing written\n",
-					est.Table, t.Items, t.CacheHits, t.NoInput, t.Calls, t.Expected, t.Worst)
-				if opts.BudgetSet && t.Worst > opts.Budget {
-					fmt.Fprintf(os.Stderr, "budget %s may not cover the worst case; items that do not fit will be skipped (resumable)\n", opts.Budget)
-				}
-				return format.Output(os.Stdout, resolveFormat(), data, estimateColumns, false)
+				return printEstimate(est, opts)
 			}
 
 			res, err := engine.Execute(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
-			r, st := res.Run, res.Run.Stats
-			fmt.Fprintf(os.Stderr, "run %d %s in %s: %d items — ok %d, empty %d, failed %d, skipped %d, pending %d · cache hits %d · calls %d · spent %s of %s budget\n",
-				r.ID, r.Status, res.Duration.Round(time.Millisecond), st.Items, st.OK, st.Empty, st.Failed, st.Skipped, st.Pending,
-				st.CacheHits, st.Calls, r.Spent, r.Budget)
-			if st.Skipped > 0 || st.Pending > 0 || st.Failed > 0 {
-				fmt.Fprintf(os.Stderr, "resume with: crm run --resume %d [--budget USD]   (details: crm run show %d --items)\n", r.ID, r.ID)
-			}
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{runData(r)}, runSummaryColumns, flagQuiet)
+			printRunLine(res)
+			return format.Output(os.Stdout, resolveFormat(), []map[string]any{runData(res.Run)}, runSummaryColumns, flagQuiet)
 		},
 	}
 	f := cmd.Flags()
-	f.StringSliceVar(&columns, "columns", nil, "enrich columns to fill, in order (a later column may read an earlier one)")
+	f.StringSliceVar(&columns, "columns", nil, "enrich/ai columns to fill, in order (a later column may read an earlier one)")
+	f.StringArrayVar(&only, "only", nil, onlyHelp+"; only matching rows are run")
 	f.IntVar(&concurrency, "concurrency", run.DefaultConcurrency, "rows processed in parallel")
 	f.StringVar(&budget, "budget", "", "hard spending cap in USD for the whole run (e.g. 2.00)")
 	f.BoolVar(&dryRun, "dry-run", false, "estimate calls, cost and cache hits; call nothing, write nothing")
@@ -233,6 +253,8 @@ var runItemColumns = []format.ColumnDef{
 	{Header: "Cache", Field: "cache_hit"},
 	{Header: "Attempts", Field: "attempts"},
 	{Header: "Cost", Field: "cost"},
+	{Header: "Tok In", Field: "tokens_in"},
+	{Header: "Tok Out", Field: "tokens_out"},
 	{Header: "ms", Field: "ms"},
 	{Header: "Value", Field: "value"},
 	{Header: "Error", Field: "error"},
@@ -279,6 +301,7 @@ func runShowCmd() *cobra.Command {
 					"id": it.ID, "row": it.RowPosition, "column": it.Column, "status": it.Status,
 					"cache_hit": it.CacheHit, "attempts": it.Attempts, "calls": it.Calls,
 					"cost": it.Cost.String(), "cost_usd": it.Cost.USD(), "ms": it.MS,
+					"tokens_in": it.TokensIn, "tokens_out": it.TokensOut,
 					"provider": "", "value": "", "error": "",
 				}
 				if it.Provider != nil {
