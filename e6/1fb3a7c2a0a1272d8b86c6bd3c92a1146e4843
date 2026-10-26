@@ -1,0 +1,28 @@
+internal/column/ai.go
+  h_b156936c57c455 1-255
+internal/column/column.go
+  h_b156936c57c455 4-5,19-20,27,33,36,40-42,47,54-60,109,112-113,119,131-132,140-141,178-184,188-230,232-238,246-253
+internal/column/column_test.go
+  h_b156936c57c455 28-32,45-54,66,69-100
+internal/run/ai_test.go
+  h_b156936c57c455 1-157
+internal/run/engine.go
+  h_b156936c57c455 52-58,88,98-104,106-110,124,126,137-138,142-143,146,178-180,195,222,285-290,299,309,501,504,506,509,511-513,532,538,548-549,556-557
+internal/run/store.go
+  h_b156936c57c455 47-48,85-87,185,203-204,220-221,223-224,241,250-251,257-258
+internal/table/table.go
+  h_b156936c57c455 195-227,229-230,255-256,258,313-314,323-325
+internal/table/table_test.go
+  h_b156936c57c455 45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e61fb3a7c2a0a1272d8b86c6bd3c92a1146e4843",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
