@@ -1,0 +1,54 @@
+bench/01-import-csv.json
+  h_b156936c57c455 1-26
+bench/02-upsert-titles.json
+  h_b156936c57c455 1-28
+bench/03-enrich-industry.json
+  h_b156936c57c455 1-22
+bench/04-budget-cap.json
+  h_b156936c57c455 1-21
+bench/05-qualify-20.json
+  h_b156936c57c455 1-20
+bench/06-ai-score.json
+  h_b156936c57c455 1-21
+bench/07-dedupe-people.json
+  h_b156936c57c455 1-27
+bench/08-dedupe-orgs-fuzzy.json
+  h_b156936c57c455 1-17
+bench/09-export-filtered.json
+  h_b156936c57c455 1-26
+bench/10-pipeline.json
+  h_b156936c57c455 1-18
+bench/fixtures/dupes_40.csv
+  h_b156936c57c455 1-41
+bench/fixtures/icp.md
+  h_b156936c57c455 1-5
+bench/fixtures/leads_20.csv
+  h_b156936c57c455 1-21
+bench/fixtures/orgs_fuzzy.csv
+  h_b156936c57c455 1-13
+bench/fixtures/people_135.csv
+  h_b156936c57c455 1-136
+bench/fixtures/titles_20.csv
+  h_b156936c57c455 1-21
+internal/bench/runner.go
+  h_b156936c57c455 1-472
+internal/bench/task.go
+  h_b156936c57c455 1-172
+internal/cli/bench.go
+  h_b156936c57c455 1-220
+internal/cli/bench_test.go
+  h_b156936c57c455 1-59
+internal/cli/root.go
+  h_b156936c57c455 60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b21a68487a800001fa9379fcafb7755c05d49f02",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
