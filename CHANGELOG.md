@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom fields in `person show` / `org show` (table, CSV/TSV columns, `custom_fields` in JSON)
 - Migration `002_imports.sql`: `import_batches` and `import_rows` (provenance for round-trip export)
 - `NOTICE` with upstream MIT attribution
+- `crm table import <file.csv|-> --as <name> [--key col]`, `crm table list|show|export <name> [-f csv|tsv|json] [--only expr]`: workspace tables of rows kept in import order; filters `col>=70`, `col=value`, `col~regex`, `col!=` (repeatable, AND)
+- `crm column add <table> <name> --type input|formula|enrich [--waterfall p1,p2] [--from col] [--field path] [--expr template]`, `crm column list|rm`
+- `crm run <table> --columns a,b [--concurrency N] [--budget USD] [--dry-run] [--retry N] [--backoff D] [--resume RUN_ID]`, `crm run list|show <id> [--items]`: batch enrichment with provider waterfall (first non-empty answer wins), cache by (provider, input hash) consulted before spending, hard budget (reserve before calling), exponential backoff on 429/5xx/timeouts, per-item checkpoint and resume
+- Provider adapters: Exa (search/contents), Jina Reader, GitHub (users/orgs) and a generic `http` adapter (URL/body template + JSON path); `crm provider list|set` for prices, rates, credentials (env var names) and endpoints; `CRM_PROVIDER_<NAME>_URL` base URL override
+- Migration `003_data_plane.sql`: `workspaces`, `workspace_rows`, `workspace_columns`, `runs`, `run_items`, `enrichment_cache`, `providers` (seeded with exa, exa-contents, jina, github)
 
 ## [0.1.6] - 2026-03-08
 

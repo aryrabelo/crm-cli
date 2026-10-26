@@ -21,6 +21,7 @@ Single static binary. SQLite database. No cloud. No accounts. Your data stays on
 - **Full-Text Search** — find anything across all entities instantly
 - **Context Briefing** — one command to get everything about a person before a meeting
 - **AI-Ready** — built-in MCP server for Claude and other AI agents
+- **Enrichment Pipeline** — CSV tables, computed columns and batch runs with provider waterfall, cache, budget and resume
 - **Multiple Output Formats** — table, JSON, CSV, TSV — pipe into anything
 - **Zero Dependencies** — single binary, pure-Go SQLite, runs anywhere
 
@@ -171,6 +172,36 @@ crm rows org --only industry=SaaS -f json
 ```
 
 Headers like `name`, `email`, `phone`, `company`, `domain` map to core fields automatically (`--map csvcol=field` overrides; `--map csvcol=` keeps a column custom). Every other column becomes a custom field, shown by `person show` / `org show` (`custom_fields` in JSON). Each import is recorded as a batch, so `crm rows --import <id> -f csv` reproduces the file byte for byte — header text, row order, UTF-8 BOM, CRLF/LF and trailing newline included. Normalized on the way back: unnecessary quotes (only cells with a comma, quote or line break are quoted) and blank lines in multi-column files. Duplicate or empty headers, ragged rows and broken quoting fail with exit code `2`.
+
+### Tables, Columns & Runs (enrichment pipeline)
+
+A **table** is a named set of rows imported from CSV; **columns** are declared on it; a **run** fills enrich columns in batch through a provider **waterfall**, with a cache, a hard budget and resume.
+
+```bash
+crm table import leads.csv --as leads --key login        # rows keep file order; --key upserts on re-import
+crm column add leads profile --type enrich --waterfall github --from login
+crm column add leads company --type enrich --waterfall github,exa --from login --field company
+crm column add leads label --type formula --expr "{{login}} ({{company}})"
+crm run leads --columns profile,company --dry-run         # estimated calls, cost, cache hits; writes nothing
+crm run leads --columns profile,company --concurrency 8 --budget 2.00
+crm run --resume 3 --budget 5                             # continue run 3 (pending/failed/skipped items only)
+crm run list
+crm run show 3 --items
+crm table show leads --only "company!="                   # filters: = != > >= < <= ~ (regex) !~
+crm table export leads -f csv --only "score>=70"          # csv (default), tsv or json
+crm column list leads                                     # type, definition, max cost per row, filled rows
+crm provider list
+crm provider set mine --kind http --url "https://api.example.com/v1/find?q={{input}}" --path data.email \
+  --auth-env EXAMPLE_KEY --price 0.002
+```
+
+- **Column types:** `input` (imported cells), `formula` (template evaluated on read; `{{col}}`, `{{col.json.path}}`), `enrich` (filled by `crm run`; `--from` is the input column, default the table key; `--field` keeps one value of the answer).
+- **Waterfall:** providers are tried in order; the first non-empty answer wins, errors and empty answers fall through, and the run item records which provider answered.
+- **Cache:** every answer is cached by (provider, input hash), and the cache is consulted for the whole waterfall before anything is spent — re-running costs `$0`.
+- **Budget:** a call is made only after its price is reserved, so a run never spends more than `--budget`; items that do not fit are marked `skipped`. `--budget` is required whenever a run may spend money (`--dry-run` shows how much).
+- **Retry:** 429, 408, 5xx and network timeouts are retried `--retry` times (default 2) with exponential backoff from `--backoff` (default 500ms), honoring `Retry-After`. Failed calls cost nothing.
+- **Checkpoint/resume:** each row × column item is saved as it finishes; Ctrl-C leaves the run `interrupted`, and `crm run --resume <id>` processes only items that are not done.
+- **Providers:** `exa` (search, `EXA_API_KEY`, $0.005/call), `exa-contents` ($0.001/page), `jina` (Reader, optional `JINA_API_KEY`, free), `github` (users/orgs API, optional `GITHUB_TOKEN`, free), plus any JSON API as a generic `http` provider. Prices and rates are provider config (`crm provider set`); credentials are read from the environment, never stored. `CRM_PROVIDER_<NAME>_URL` overrides a provider's base URL.
 
 ## Output Formats
 

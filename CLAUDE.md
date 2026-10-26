@@ -51,12 +51,17 @@ internal/
     mcp.go                     # MCP server launcher
     import.go                  # CSV import (fork: data plane)
     rows.go                    # Row export with custom fields (fork: data plane)
+    table.go                   # crm table import/list/show/export (fork: data plane)
+    column.go                  # crm column add/list/rm (fork: data plane)
+    run.go                     # crm run, run list/show (fork: data plane)
+    provider.go                # crm provider list/set (fork: data plane)
     custom_fields.go           # Custom field output for show commands
   db/
     db.go                      # Connection, pragmas, migration runner
     migrations/                # Embedded SQL files (go:embed)
       001_initial.sql
       002_imports.sql          # Import batches + rows (fork: data plane)
+      003_data_plane.sql       # Tables, columns, runs, run items, cache, providers (fork: data plane)
     repo/
       person.go                # Person repository
       org.go                   # Organization repository
@@ -78,6 +83,27 @@ internal/
     table.go                   # Table formatter
     json.go                    # JSON formatter
     csv.go                     # CSV/TSV formatter
+  value/
+    value.go                   # JSON cell helpers: dotted-path lookup, emptiness, text form (fork: data plane)
+  provider/
+    provider.go                # Adapter interface (Enrich/Estimate/Key), Cost, retryable Error (fork: data plane)
+    config.go                  # providers table: config store + validation
+    registry.go                # Kind → adapter, env credentials, CRM_PROVIDER_<NAME>_URL override
+    httpcall.go                # Shared HTTP call + status classification (404 = no data, 429/5xx retryable)
+    exa.go / jina.go / github.go / http.go  # Adapters (http = URL/body template + JSON path)
+    limiter.go                 # Per-provider rate limiter
+  waterfall/
+    waterfall.go               # Ordered providers, cache-first fallthrough, estimate; enrichment_cache store
+  column/
+    column.go                  # Column types (input/formula/enrich), validation, formula eval, waterfall build
+  table/
+    table.go                   # Workspaces, rows, columns store (fork: data plane)
+    import.go                  # CSV → table rows (order kept, upsert by key)
+    filter.go                  # --only filter expressions + materialized views
+  run/
+    store.go                   # runs + run_items (checkpoints), stats
+    budget.go                  # Hard budget (reserve/settle), backoff
+    engine.go                  # Worker pool, retry, dry-run estimate, resume
   model/
     types.go                   # Domain types, constants, enums
     errors.go                  # Error types with exit codes
@@ -92,6 +118,7 @@ internal/
 3. **Formatters** (`internal/format/`) — transform data to table/json/csv. No business logic.
 4. **Models** (`internal/model/`) — domain types, constants, error types. No imports from other internal packages.
 5. **MCP server** (`internal/mcp/`) — thin wrappers around the same repositories the CLI uses. No duplicate logic.
+6. **Data plane** (fork: `internal/table`, `internal/column`, `internal/run`, `internal/provider`, `internal/waterfall`, `internal/value`) — self-contained packages that own their SQL (parameterized, `repo.DBTX`) so the upstream tree stays untouched except for wiring. Dependency order: `value` ← `provider` ← `waterfall` ← `column` ← `table` ← `run` ← `cli`. Money is integer micro-USD (`provider.Cost`).
 
 ### Key Patterns
 
