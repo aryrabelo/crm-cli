@@ -1,0 +1,18 @@
+internal/cli/testdata/.gitattributes
+  h_b156936c57c455 1-2
+internal/cli/testdata/people_135x4.csv
+  h_b156936c57c455 9,14,23,28,37,42,51,56,65,70,79,84,93,98,107,112,121,126,135,140,149,154,163,168,177,182
+internal/cli/testdata/people_6x30_bom_crlf.csv
+  h_b156936c57c455 1-2,4,6-7,9,11,13-14,16,18,20-21,23,25-26,28,30,32-33,35,37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e29211283a069a31b3c07451a1950b491d91ff4e",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
