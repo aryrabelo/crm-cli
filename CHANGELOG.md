@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `crm import <file.csv|-> --as person|org [--map csvcol=field] [--key field] [--dry-run]`: CSV import where known columns map to core fields and every other column becomes a custom field; `--key` upserts instead of duplicating
+- `crm rows <person|org> [--import <batch-id>] [--only column=value]`: row export with core + custom fields; with `--import`, byte-identical CSV round trip of the original file
+- Custom fields in `person show` / `org show` (table, CSV/TSV columns, `custom_fields` in JSON)
+- Migration `002_imports.sql`: `import_batches` and `import_rows` (provenance for round-trip export)
+- `NOTICE` with upstream MIT attribution
+
 ## [0.1.6] - 2026-03-08
 
 ### Added

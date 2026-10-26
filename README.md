@@ -159,6 +159,19 @@ crm status
 
 Shows contact/org counts, open deals with total value, task counts, overdue items, pipeline breakdown, and recent activity.
 
+### Import & Rows (CSV with custom fields)
+
+```bash
+crm import leads.csv --as person --key email          # upsert by email, no duplicates on re-import
+crm import orgs.csv --as org --map "Razão Social=name,Site=domain" --dry-run
+cat leads.csv | crm import - --as person
+crm rows person -f csv                                 # id + core fields + every custom field
+crm rows person --import 1 -f csv > roundtrip.csv      # original header and row order of batch 1
+crm rows org --only industry=SaaS -f json
+```
+
+Headers like `name`, `email`, `phone`, `company`, `domain` map to core fields automatically (`--map csvcol=field` overrides; `--map csvcol=` keeps a column custom). Every other column becomes a custom field, shown by `person show` / `org show` (`custom_fields` in JSON). Each import is recorded as a batch, so `crm rows --import <id> -f csv` reproduces the file byte for byte — header text, row order, UTF-8 BOM, CRLF/LF and trailing newline included. Normalized on the way back: unnecessary quotes (only cells with a comma, quote or line break are quoted) and blank lines in multi-column files. Duplicate or empty headers, ragged rows and broken quoting fail with exit code `2`.
+
 ## Output Formats
 
 Every command supports `--format` / `-f`:

@@ -49,10 +49,14 @@ internal/
     context.go                 # Person context briefing
     status.go                  # Dashboard summary
     mcp.go                     # MCP server launcher
+    import.go                  # CSV import (fork: data plane)
+    rows.go                    # Row export with custom fields (fork: data plane)
+    custom_fields.go           # Custom field output for show commands
   db/
     db.go                      # Connection, pragmas, migration runner
     migrations/                # Embedded SQL files (go:embed)
       001_initial.sql
+      002_imports.sql          # Import batches + rows (fork: data plane)
     repo/
       person.go                # Person repository
       org.go                   # Organization repository
@@ -62,6 +66,11 @@ internal/
       task.go                  # Task repository
       custom_field.go          # Custom field repository
       relationship.go          # Person-to-person relationship repository
+      import.go                # Import batches + raw entity writes (fork: data plane)
+  csvio/
+    csvio.go                   # Byte-preserving CSV parse/write (fork: data plane)
+  importer/
+    importer.go                # Column mapping, upsert by key, export cells (fork: data plane)
   mcp/
     server.go                  # MCP server setup + all tool definitions
   format/
