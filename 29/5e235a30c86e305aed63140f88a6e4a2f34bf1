@@ -1,0 +1,34 @@
+internal/cli/custom_fields.go
+  h_b156936c57c455 1-55
+internal/cli/import.go
+  h_b156936c57c455 1-162
+internal/cli/import_test.go
+  h_b156936c57c455 1-297
+internal/cli/org.go
+  h_b156936c57c455 169-173
+internal/cli/person.go
+  h_b156936c57c455 200-204
+internal/cli/root.go
+  h_b156936c57c455 52-53
+internal/cli/rows.go
+  h_b156936c57c455 1-162
+internal/cli/testdata/people_135x4.csv
+  h_b156936c57c455 1-189
+internal/cli/testdata/people_6x30_bom_crlf.csv
+  h_b156936c57c455 1-39
+internal/importer/importer.go
+  h_b156936c57c455 1-395
+internal/importer/importer_test.go
+  h_b156936c57c455 1-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "295e235a30c86e305aed63140f88a6e4a2f34bf1",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
