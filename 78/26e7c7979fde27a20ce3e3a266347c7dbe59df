@@ -1,0 +1,40 @@
+CHANGELOG.md
+  h_b156936c57c455 32,47
+CLAUDE.md
+  h_b156936c57c455 71,121,124
+README.md
+  h_b156936c57c455 203-205
+internal/cli/qualify.go
+  h_b156936c57c455 40,68,121,127
+internal/cli/run.go
+  h_b156936c57c455 38,75-78,88,99-114,122-128,176,179
+internal/db/migrations/1005_uncertain_cost.sql
+  h_b156936c57c455 1-11
+internal/mcp/batch.go
+  h_b156936c57c455 288-289,305-306,394-395,404
+internal/provider/httpcall.go
+  h_b156936c57c455 8,11,20-22,24-32,34-37,39-44,50,118-127
+internal/provider/provider.go
+  h_b156936c57c455 80-87,97-99,110-119
+internal/run/engine.go
+  h_b156936c57c455 62-65,554-556,571-575,585-587,597-611,632,641,645
+internal/run/store.go
+  h_b156936c57c455 49-52,89-91,193,211,253-254,256,311-315
+internal/run/uncertain_test.go
+  h_b156936c57c455 1-108
+internal/service/qualify.go
+  h_b156936c57c455 53-55,121
+internal/service/run.go
+  h_b156936c57c455 44,66-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7826e7c7979fde27a20ce3e3a266347c7dbe59df",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
