@@ -1,0 +1,32 @@
+CLAUDE.md
+  h_b156936c57c455 149,153
+README.md
+  h_b156936c57c455 206,281-296
+cmd/crm/main.go
+  h_b156936c57c455 8,25-27,29,31-44,47-48,50-54
+internal/cli/qualify.go
+  h_b156936c57c455 55-56,115-118
+internal/cli/qualify_test.go
+  h_b156936c57c455 136-137
+internal/cli/run.go
+  h_b156936c57c455 91-107,138-143,198-201
+internal/cli/run_exit_test.go
+  h_b156936c57c455 1-112
+internal/cli/run_outcome_test.go
+  h_b156936c57c455 1-31
+internal/model/errors.go
+  h_b156936c57c455 14-20,40-41,50-55
+internal/model/errors_test.go
+  h_b156936c57c455 22-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e9f71c585620ffcc63f7a672b698d17d9c34e42a",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
