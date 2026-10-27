@@ -1,0 +1,22 @@
+CHANGELOG.md
+  h_b156936c57c455 15,21,26,37-40
+CLAUDE.md
+  h_b156936c57c455 63-64,66-68
+internal/db/db.go
+  h_b156936c57c455 6,9-11,35,60-68,70-75,77,79-80,82-84,86-103,105-117,119-145,148-149,151-154,156-166,168-174,176-199,201-206,208-211,213-216,218-223,225-226,228-254
+internal/db/db_test.go
+  h_b156936c57c455 59-60,62-64
+internal/db/migrate_test.go
+  h_b156936c57c455 1-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "265ae324d1b5b45bbc70c9a550d6173fc2f692c1",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
