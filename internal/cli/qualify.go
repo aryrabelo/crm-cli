@@ -52,7 +52,8 @@ The prompt is the criteria plus every other column of the row. It runs
 through crm run: answers are cached (re-running unchanged rows costs 0), the
 budget is a hard cap (--budget is required when the run may spend money), and
 --dry-run estimates calls and cost without writing anything. Prints the
-decision counts, tokens in/out and cost vs budget.`,
+decision counts, tokens in/out and cost vs budget, and exits like crm run:
+5 when the budget stopped it, 6 with failed rows, 128+n on a signal.`,
 		Example: `  crm qualify leads --criteria files/icp.md --explain --dry-run
   crm qualify leads --criteria files/icp.md --explain --budget 0.50
   crm table export leads --only "qualified=yes"`,
@@ -111,7 +112,10 @@ decision counts, tokens in/out and cost vs budget.`,
 			fmt.Fprintf(os.Stderr, "qualify %s.%s: yes %d · no %d · maybe %d · failed %d · skipped %d — tokens in %d / out %d · spent %s of %s budget\n",
 				res.Table, res.Column, res.Counts["yes"], res.Counts["no"], res.Counts["maybe"], res.Counts[run.ItemFailed],
 				res.Counts[run.ItemSkipped], st.TokensIn, st.TokensOut, r.Spent, r.Budget)
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{service.QualifyData(res)}, qualifyColumns, flagQuiet)
+			if err := format.Output(os.Stdout, resolveFormat(), []map[string]any{service.QualifyData(res)}, qualifyColumns, flagQuiet); err != nil {
+				return err
+			}
+			return runOutcome(res.Run.Run)
 		},
 	}
 	f := cmd.Flags()

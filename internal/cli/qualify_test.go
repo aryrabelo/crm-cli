@@ -133,7 +133,8 @@ func TestQualify_Acceptance(t *testing.T) {
 	// Real run.
 	out, stderr, code = crmEnv(t, env, dbPath, "qualify", "leads", "--criteria", criteria, "--explain",
 		"--budget", "1", "--concurrency", "8", "-f", "json")
-	require.Equal(t, 0, code, stderr)
+	require.Equal(t, 6, code, "Broken Co failed: exit 6\n%s", stderr)
+	assert.Contains(t, stderr, "crm: error: run 1 finished with 1 failed item(s)")
 	sum := jsonRows(t, out)[0]
 	assert.EqualValues(t, 7, sum["yes"])
 	assert.EqualValues(t, 6, sum["no"])

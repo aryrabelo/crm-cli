@@ -203,7 +203,7 @@ crm cache clear --provider mine --older-than 7d           # forget cached answer
 - **Budget:** a call is made only after its estimated price is reserved, so the spend crm records never exceeds `--budget`; items that do not fit are marked `skipped`. The budget counts the **configured** prices (`crm provider set --price`, `--price-in/--price-out`); what a provider actually bills follows its own prices, which crm does not see. `--budget` is required whenever a run may spend money (`--dry-run` shows how much). When an `ai` column's prompt reads a column filled earlier in the same run (`--columns domain,fit` with `{{domain}}` in `fit`), that input is not known before the run, so `--dry-run` reports the worst case as `unbounded (≥ $X)` (`unbounded_items` in JSON) instead of a figure priced on an empty answer.
 - **Retry:** 429, 408, 5xx and network timeouts are retried `--retry` times (default 2) with exponential backoff from `--backoff` (default 500ms), honoring `Retry-After`.
 - **What a failure costs:** an error response (4xx/5xx), a refused connection or a missing credential costs `$0`. A `404` and an `http` 200 flagged by `--error-path`/`--ok-path` were served, so they cost the call's price. A call that times out or loses its connection **after the request was sent** may have been billed: it is counted at its reserved estimate and reported as uncertain (`uncertain` per item, `uncertain_spent` per run, a line after `crm run`); a paid `POST` in that state (every `llm` call, `http` providers with `--body`) is not retried unless `--retry-uncertain` (CLI) / `retry_uncertain` (MCP) — a retry may pay twice. Ctrl-C during such a call counts it the same way.
-- **Checkpoint/resume:** each row × column item is saved as it finishes; Ctrl-C leaves the run `interrupted`, and `crm run --resume <id>` processes only items that are not done.
+- **Checkpoint/resume:** each row × column item is saved as it finishes; Ctrl-C leaves the run `interrupted` (exit `130`), and `crm run --resume <id>` processes only items that are not done. A run that ends with work left exits non-zero (see [exit codes](#piping--composition)).
 - **One executor per run:** a run is leased by the process executing it (owner + heartbeat, renewed every 10 s and on every checkpoint). A second `crm run --resume`, or `crm_run_start` on a run another process is executing, is refused with exit `4` naming the holder, so the budget and the stats are never spent or counted twice. If the holder died, its run can be resumed once its heartbeat has been silent for 30 s.
 - **Providers:** `exa` (search, `EXA_API_KEY`, $0.005/call), `exa-contents` ($0.001/page), `jina` (Reader, optional `JINA_API_KEY`, free), `github` (users/orgs API, optional `GITHUB_TOKEN`, free), plus any JSON API as a generic `http` provider. Prices and rates are provider config (`crm provider set`); credentials are read from the environment, never stored. `CRM_PROVIDER_<NAME>_URL` overrides a provider's base URL.
 
@@ -278,7 +278,22 @@ crm person list -f csv > contacts.csv
 crm task list --overdue -f json | jq -r '.[] | "OVERDUE: \(.title)"'
 ```
 
-Exit codes: `0` success, `1` error, `2` usage, `3` not found, `4` conflict, `10` database error.
+Exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | success; for `crm run` / `crm qualify`, every item is done (`ok` or `empty`) |
+| `1` | error |
+| `2` | usage error |
+| `3` | not found |
+| `4` | conflict (including a run held by another `crm run`) |
+| `5` | `crm run` / `crm qualify` stopped at its budget (`budget_exhausted`, items `skipped`) |
+| `6` | `crm run` / `crm qualify` completed with `failed` items |
+| `7` | `crm run` / `crm qualify` ended `interrupted` with items `pending`, without a signal |
+| `10` | database error |
+| `128+n` | stopped by signal `n`: `130` for Ctrl-C (SIGINT), `143` for SIGTERM |
+
+Codes `5`–`7` and `128+n` still print the run summary; the run is saved and `crm run --resume <id>` continues it. Run statuses are `running`, `completed`, `budget_exhausted` and `interrupted`.
 
 ## AI Integration (MCP Server)
 

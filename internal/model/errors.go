@@ -11,6 +11,13 @@ var (
 	ErrValidation = errors.New("validation error")
 	ErrConflict   = errors.New("conflict")
 	ErrDatabase   = errors.New("database error")
+
+	// Outcomes of a `crm run` / `crm qualify` that ended without finishing
+	// every item. The run and its checkpoints are saved (resumable); the
+	// error only sets the exit status.
+	ErrBudgetExhausted = errors.New("budget exhausted")
+	ErrItemsFailed     = errors.New("items failed")
+	ErrInterrupted     = errors.New("interrupted")
 )
 
 // ExitError wraps a sentinel with a user-facing message.
@@ -30,7 +37,8 @@ func NewExitError(sentinel error, format string, args ...any) *ExitError {
 	}
 }
 
-// ExitCode maps an error to a CLI exit code.
+// ExitCode maps an error to a CLI exit code. A process stopped by a signal
+// exits 128+n instead (cmd/crm/main.go).
 func ExitCode(err error) int {
 	switch {
 	case errors.Is(err, ErrValidation):
@@ -39,6 +47,12 @@ func ExitCode(err error) int {
 		return 3
 	case errors.Is(err, ErrConflict):
 		return 4
+	case errors.Is(err, ErrBudgetExhausted):
+		return 5
+	case errors.Is(err, ErrItemsFailed):
+		return 6
+	case errors.Is(err, ErrInterrupted):
+		return 7
 	case errors.Is(err, ErrDatabase):
 		return 10
 	default:

@@ -88,6 +88,23 @@ func printRunLine(res *run.Result) {
 	}
 }
 
+// runOutcome is the exit status of a run invocation that did not finish
+// every item: interrupted (7; the process exits 128+n when a signal stopped
+// it), budget_exhausted (5), or completed with failed items (6). The run is
+// saved and resumable either way; nil means every item is done.
+func runOutcome(r *run.Run) error {
+	switch {
+	case r.Status == run.StatusInterrupted:
+		return model.NewExitError(model.ErrInterrupted, "run %d interrupted: %d item(s) pending (crm run --resume %d)", r.ID, r.Stats.Pending, r.ID)
+	case r.Status == run.StatusBudgetExhausted:
+		return model.NewExitError(model.ErrBudgetExhausted, "run %d stopped at its budget: %d item(s) skipped (crm run --resume %d --budget USD)", r.ID, r.Stats.Skipped, r.ID)
+	case r.Stats.Failed > 0:
+		return model.NewExitError(model.ErrItemsFailed, "run %d finished with %d failed item(s) (crm run show %d --items)", r.ID, r.Stats.Failed, r.ID)
+	default:
+		return nil
+	}
+}
+
 func runCmd() *cobra.Command {
 	var columns, only []string
 	var concurrency, retry int
@@ -118,7 +135,12 @@ its own prices, which crm does not see.
 
 --budget is required when the run may spend money (see --dry-run). Every item
 is checkpointed: --resume <run-id> continues a run, re-trying pending, failed
-and skipped items (with a new --budget, if given).`,
+and skipped items (with a new --budget, if given).
+
+Exit status: 0 when every item is done (ok or empty); 5 when the budget
+stopped the run (budget_exhausted); 6 when it completed with failed items;
+7 when it was interrupted with items pending; 128+n when signal n stopped it
+(130 for Ctrl-C, 143 for SIGTERM); 4 when another crm run holds the run.`,
 		Example: `  crm run leads --columns company --dry-run
   crm run leads --columns company,fit --concurrency 8 --budget 2.00
   crm run leads --columns fit --only "company!=" --budget 0.50
@@ -173,7 +195,10 @@ and skipped items (with a new --budget, if given).`,
 				return err
 			}
 			printRunLine(res)
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{service.RunData(res.Run)}, runSummaryColumns, flagQuiet)
+			if err := format.Output(os.Stdout, resolveFormat(), []map[string]any{service.RunData(res.Run)}, runSummaryColumns, flagQuiet); err != nil {
+				return err
+			}
+			return runOutcome(res.Run)
 		},
 	}
 	f := cmd.Flags()
