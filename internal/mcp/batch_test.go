@@ -265,6 +265,14 @@ func TestQualifyAndPushDedupe(t *testing.T) {
 			out := ok(t, c, "crm_qualify", map[string]any{"table": "leads", "criteria": "B2B only", "dry_run": true})
 			assert.Equal(t, true, out["dry_run"])
 			assert.EqualValues(t, 4, out["total"].(map[string]any)["calls"])
+			assert.Equal(t, []any{"company", "domain", "description"}, out["fields"])
+			assert.EqualValues(t, 1000, out["field_limit"])
+			narrow := ok(t, c, "crm_qualify", map[string]any{"table": "leads", "criteria": "B2B only", "dry_run": true,
+				"fields": []any{"description"}, "field_limit": 10})
+			assert.Equal(t, []any{"description"}, narrow["fields"])
+			assert.EqualValues(t, 10, narrow["field_limit"])
+			assert.Less(t, narrow["total"].(map[string]any)["worst_usd"], out["total"].(map[string]any)["worst_usd"],
+				"fewer, capped fields cost less")
 
 			_, isErr, text := call(t, c, "crm_qualify", map[string]any{"table": "leads", "criteria": " "})
 			assert.True(t, isErr)

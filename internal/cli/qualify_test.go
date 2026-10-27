@@ -189,6 +189,90 @@ func TestQualify_Acceptance(t *testing.T) {
 	assert.Len(t, jsonRows(t, out), 5, "the decision column is redefined, not duplicated")
 }
 
+// P1-6: the default qualify prompt leaves raw enrich answers out (a 60 KB
+// profile per row here), keeps enrich --field values, says each field is
+// cut, and --fields / --field-limit choose and cap the fields explicitly.
+func TestQualify_PromptFieldsSkipBlobs(t *testing.T) {
+	blob := strings.Repeat("lorem ipsum ", 5000)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		login := strings.TrimPrefix(r.URL.Path, "/users/")
+		_, _ = fmt.Fprintf(w, `{"login":%q,"company":"%s Inc","bio":%q}`, login, login, blob)
+	}))
+	defer gh.Close()
+	var mu sync.Mutex
+	var prompts []string
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct{ Content string } `json:"messages"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		mu.Lock()
+		prompts = append(prompts, req.Messages[len(req.Messages)-1].Content)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"content":"{\"value\": \"yes\"}"}}],"usage":{"prompt_tokens":100,"completion_tokens":5}}`)
+	}))
+	defer llm.Close()
+	env := []string{
+		"CRM_PROVIDER_GITHUB_URL=" + gh.URL, "GITHUB_TOKEN=",
+		"CRM_LLM_BASE_URL=" + llm.URL + "/v1", "CRM_LLM_API_KEY=sk-test", "CRM_LLM_MODEL=m",
+		"CRM_LLM_PRICE_IN=1", "CRM_LLM_PRICE_OUT=2",
+	}
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	src := writeFile(t, dir, "leads.csv", "login,description\nacme,B2B payroll\nzorg,industrial software\n")
+	criteria := writeFile(t, dir, "icp.md", "B2B software.\n")
+	_, stderr, code := crmEnv(t, env, dbPath, "table", "import", src, "--as", "leads", "--key", "login")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crmEnv(t, env, dbPath, "column", "add", "leads", "profile", "--type", "enrich", "--waterfall", "github")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crmEnv(t, env, dbPath, "column", "add", "leads", "org", "--type", "enrich", "--waterfall", "github", "--field", "company")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crmEnv(t, env, dbPath, "run", "leads", "--columns", "profile,org")
+	require.Equal(t, 0, code, stderr)
+
+	worst := func(args ...string) (float64, string) {
+		t.Helper()
+		out, stderr, code := crmEnv(t, env, dbPath, append([]string{"qualify", "leads", "--criteria", criteria, "--dry-run", "-f", "json"}, args...)...)
+		require.Equal(t, 0, code, stderr)
+		est := jsonRows(t, out)
+		return est[len(est)-1]["worst_usd"].(float64), stderr
+	}
+	def, stderr := worst()
+	assert.Contains(t, stderr, "prompt fields: login, description, org (each cut to 1000 characters)")
+	withBlob, stderr := worst("--fields", "login,description,profile,org", "--field-limit", "100000")
+	assert.Contains(t, stderr, "prompt fields: login, description, profile, org (each cut to 100000 characters)")
+	assert.Less(t, def*20, withBlob, "leaving the raw profile out cuts the worst case by far more than 20x")
+	capped, _ := worst("--fields", "login,profile", "--field-limit", "200")
+	assert.Less(t, capped, withBlob/20, "the field limit caps the blob")
+	_, stderr, code = crmEnv(t, env, dbPath, "qualify", "leads", "--criteria", criteria, "--dry-run", "--fields", "qualified")
+	assert.Equal(t, 2, code, stderr)
+	_, stderr, code = crmEnv(t, env, dbPath, "qualify", "leads", "--criteria", criteria, "--dry-run", "--field-limit", "0")
+	assert.Equal(t, 2, code, stderr)
+
+	// The real prompt: no raw blob, the enrich field and the cap notice.
+	_, stderr, code = crmEnv(t, env, dbPath, "qualify", "leads", "--criteria", criteria, "--budget", "1")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crmEnv(t, env, dbPath, "qualify", "leads", "--criteria", criteria, "--budget", "1",
+		"--name", "fit", "--fields", "login,profile.bio", "--field-limit", "50")
+	require.Equal(t, 0, code, stderr)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, prompts, 4)
+	for _, p := range prompts[:2] {
+		assert.Contains(t, p, "Each field is cut to 1000 characters")
+		assert.Contains(t, p, "- org: ")
+		assert.Contains(t, p, " Inc\n")
+		assert.NotContains(t, p, "lorem")
+		assert.Less(t, len(p), 2000)
+	}
+	for _, p := range prompts[2:] {
+		assert.Contains(t, p, "Each field is cut to 50 characters")
+		assert.Contains(t, p, "- profile.bio: "+blob[:50]+"…\n")
+		assert.NotContains(t, p, "- description:")
+	}
+}
+
 func TestColumnAdd_AIValidationAndTypedValues(t *testing.T) {
 	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -171,6 +171,9 @@ func (c *Column) validateAI(exists func(string) bool, columns []*Column) error {
 	if _, err := ParseOutput(c.Config.Output); err != nil {
 		return err
 	}
+	if c.Config.FieldLimit < 0 {
+		return model.NewExitError(model.ErrValidation, "ai column %q: field limit must be 0 (no cap) or more", c.Name)
+	}
 	refs := placeholder.FindAllStringSubmatch(c.Config.Prompt, -1)
 	if len(refs) == 0 {
 		return model.NewExitError(model.ErrValidation, "ai column %q: the prompt uses no {{column}} placeholder, so every row would get the same answer", c.Name)
@@ -204,7 +207,7 @@ func (c *Column) aiInput(cells map[string]any) provider.Input {
 			continue
 		}
 		if v, _ := value.Lookup(cells[name], path); !value.Empty(v) {
-			return provider.Input{Value: EvalFormula(c.Config.Prompt, cells)}
+			return provider.Input{Value: render(c.Config.Prompt, cells, c.Config.FieldLimit)}
 		}
 	}
 	return provider.Input{}

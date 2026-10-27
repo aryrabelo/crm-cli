@@ -231,7 +231,7 @@ crm run show 4                                                  # tokens_in / to
 - **Prompt:** `--prompt` is a file (or inline text). Every `{{placeholder}}` must name a column — unknown ones fail at `column add`. A row whose placeholders are all empty is not sent.
 - **Output:** `text`, `score:MIN-MAX` (stored as a number), `enum:a|b|c` (stored as the canonical value), `bool`. The model must answer a JSON object; an invalid answer gets one repair request, then the row fails (resumable).
 - **Cost:** each call is charged the tokens the provider reports × the price. The budget reserves the worst case first — prompt bytes (a token is at least one byte) plus max tokens, twice to cover the repair — so a run never spends more than `--budget`. Cached answers cost `$0` and no tokens.
-- **qualify:** `--name` (default `qualified`), `--explain` (adds `<name>_reason`), `--only` (row filter), `--budget`, `--dry-run`, `--waterfall`, `--concurrency`. The prompt is the criteria plus every other column; re-running with the same criteria and rows is all cache hits.
+- **qualify:** `--name` (default `qualified`), `--explain` (adds `<name>_reason`), `--only` (row filter), `--budget`, `--dry-run`, `--waterfall`, `--concurrency`, `--retry`, `--fields`, `--field-limit`. The prompt is the criteria plus the row's fields. By default those are the `input` and `formula` columns and the `enrich` columns declared with `--field` (one value); `ai` columns, reason columns and raw `enrich` answers (the whole provider JSON — a Jina page can be megabytes) are left out. `--fields a,b` (MCP `fields`) picks them instead, as column names or `column.json.path` (`profile.bio`). Each field is cut to `--field-limit` characters (MCP `field_limit`, default `1000`) with a trailing `…`, and the prompt says so. `--dry-run` lists the fields. Re-running with the same criteria, fields and rows is all cache hits; changing the fields changes the prompt, so every row is asked again.
 
 ### Push (table rows → people / organizations, deduplicated)
 
@@ -360,7 +360,7 @@ Ctrl-C shuts the server down gracefully; runs started with `wait: false` are lef
 | `crm_column_add` | Declare one or more columns (`input`, `formula`, `enrich`, `ai`) | `crm column add` |
 | `crm_run_start` | Fill enrich/ai columns in one budget-capped run; `dry_run` estimates; `wait: false` returns the run id at once | `crm run` |
 | `crm_run_status` | Status, counts, calls, tokens, spend of several runs; `items: true` adds every item | `crm run show` |
-| `crm_qualify` | yes/no/maybe (+ reason) per row from markdown criteria | `crm qualify` |
+| `crm_qualify` | yes/no/maybe (+ reason) per row from markdown criteria; `fields` / `field_limit` choose and cap the prompt fields | `crm qualify` |
 | `crm_export` | Filtered rows as `csv`, `tsv` or `json` text | `crm table export` |
 | `crm_push_dedupe` | Table rows → people/orgs, dedupe by email, domain or fuzzy name; `dry_run` | `crm push` |
 

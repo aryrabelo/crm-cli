@@ -388,6 +388,8 @@ type qualifyArgs struct {
 	Explain     bool     `json:"explain,omitempty" jsonschema_description:"Also store a reason per row in <name>_reason"`
 	Filters     []string `json:"filters,omitempty" jsonschema_description:"Only qualify rows matching every filter expression"`
 	Waterfall   []string `json:"waterfall,omitempty" jsonschema_description:"llm providers in order (default llm)"`
+	Fields      []string `json:"fields,omitempty" jsonschema_description:"Columns (or column.json.path) the prompt shows per row. Default: input and formula columns plus enrich columns with a field path; ai, reason and raw enrich columns are left out"`
+	FieldLimit  int      `json:"field_limit,omitempty" jsonschema_description:"Cut each field value to this many characters (default 1000)"`
 	Budget      *usd     `json:"budget,omitempty"`
 	DryRun      bool     `json:"dry_run,omitempty"`
 	Concurrency int      `json:"concurrency,omitempty"`
@@ -402,7 +404,8 @@ func (s *Server) qualify(ctx context.Context, req gomcp.CallToolRequest) (*gomcp
 		return r, nil
 	}
 	opts := service.QualifyOptions{Table: a.Table, Criteria: a.Criteria, Name: a.Name, Explain: a.Explain, Only: a.Filters,
-		Waterfall: a.Waterfall, Concurrency: a.Concurrency, Retry: retryOr(a.Retry), RetryUncertain: a.RetryUncertain, DryRun: a.DryRun}
+		Waterfall: a.Waterfall, Fields: a.Fields, FieldLimit: a.FieldLimit, Concurrency: a.Concurrency, Retry: retryOr(a.Retry),
+		RetryUncertain: a.RetryUncertain, DryRun: a.DryRun}
 	opts.Budget, opts.BudgetSet = budgetOpts(a.Budget)
 	res, err := s.svc.Qualify(ctx, opts)
 	if err != nil {
@@ -410,7 +413,7 @@ func (s *Server) qualify(ctx context.Context, req gomcp.CallToolRequest) (*gomcp
 	}
 	if res.Estimate != nil {
 		out := estimateData(res.Estimate)
-		out["column"], out["redefine"] = res.Column, res.Redefine
+		out["column"], out["redefine"], out["fields"], out["field_limit"] = res.Column, res.Redefine, res.Fields, res.FieldLimit
 		return jsonResult(out)
 	}
 	return jsonResult(service.QualifyData(res))

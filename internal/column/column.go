@@ -9,6 +9,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/jdanielnd/crm-cli/internal/provider"
@@ -58,6 +59,9 @@ type Config struct {
 	// Reason is the input column that receives the 1–2 sentence reason the
 	// llm gives with each ai answer (--explain); empty means no reason.
 	Reason string `json:"reason,omitempty"`
+	// FieldLimit caps each placeholder value of an ai prompt at this many
+	// characters (longer values are cut and end with "…"); 0 means no cap.
+	FieldLimit int `json:"field_limit,omitempty"`
 }
 
 // Column is one declared column of a workspace.
@@ -106,7 +110,7 @@ func (c *Column) Validate(columns []*Column) error {
 	if exists(c.Name) {
 		return model.NewExitError(model.ErrConflict, "column %q already exists", c.Name)
 	}
-	aiConfig := c.Config.Prompt != "" || c.Config.Output != "" || c.Config.Reason != ""
+	aiConfig := c.Config.Prompt != "" || c.Config.Output != "" || c.Config.Reason != "" || c.Config.FieldLimit != 0
 	switch c.Type {
 	case Input:
 		if c.Config.Expr != "" || len(c.Config.Waterfall) > 0 || c.Config.From != "" || c.Config.Field != "" || aiConfig {
@@ -147,16 +151,36 @@ func (c *Column) Validate(columns []*Column) error {
 
 // EvalFormula renders a formula template against the row cells.
 func EvalFormula(expr string, cells map[string]any) string {
+	return render(expr, cells, 0)
+}
+
+// render fills the {{placeholders}} of tmpl from the row cells, cutting each
+// value to limit characters (plus "…") when limit > 0.
+func render(tmpl string, cells map[string]any, limit int) string {
 	isColumn := func(n string) bool { _, ok := cells[n]; return ok }
-	return placeholder.ReplaceAllStringFunc(expr, func(m string) string {
+	return placeholder.ReplaceAllStringFunc(tmpl, func(m string) string {
 		ref := placeholder.FindStringSubmatch(m)[1]
 		name, path, ok := resolveRef(ref, isColumn)
 		if !ok {
 			return ""
 		}
 		v, _ := value.Lookup(cells[name], path)
-		return value.Text(v)
+		return truncate(value.Text(v), limit)
 	})
+}
+
+// truncate cuts s to limit characters and appends "…" when it is longer;
+// limit <= 0 keeps s whole.
+func truncate(s string, limit int) string {
+	if limit <= 0 || utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	i := 0
+	for range limit {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+	}
+	return s[:i] + "…"
 }
 
 // Materialize returns the row cells with every formula column evaluated, in
