@@ -60,12 +60,12 @@ internal/
     bench.go                   # crm bench run [--baseline per-entity] (fork: data plane)
     custom_fields.go           # Custom field output for show commands
   db/
-    db.go                      # Connection, pragmas, migration runner
-    migrations/                # Embedded SQL files (go:embed)
+    db.go                      # Connection, pragmas, migration runner (version = file-name prefix, tracked in schema_migrations)
+    migrations/                # Embedded SQL files (go:embed); upstream owns 001–999, the fork 1001+
       001_initial.sql
-      002_imports.sql          # Import batches + rows (fork: data plane)
-      003_data_plane.sql       # Tables, columns, runs, run items, cache, providers (fork: data plane)
-      004_ai_columns.sql       # run_items tokens_in/out, seeded llm provider (fork: data plane)
+      1001_imports.sql         # Import batches + rows (fork: data plane)
+      1002_data_plane.sql      # Tables, columns, runs, run items, cache, providers (fork: data plane)
+      1003_ai_columns.sql      # run_items tokens_in/out, seeded llm provider (fork: data plane)
     repo/
       person.go                # Person repository
       org.go                   # Organization repository

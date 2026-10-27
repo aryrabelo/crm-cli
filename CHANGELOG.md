@@ -12,18 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `crm import <file.csv|-> --as person|org [--map csvcol=field] [--key field] [--dry-run]`: CSV import where known columns map to core fields and every other column becomes a custom field; `--key` upserts instead of duplicating
 - `crm rows <person|org> [--import <batch-id>] [--only column=value]`: row export with core + custom fields; with `--import`, byte-identical CSV round trip of the original file
 - Custom fields in `person show` / `org show` (table, CSV/TSV columns, `custom_fields` in JSON)
-- Migration `002_imports.sql`: `import_batches` and `import_rows` (provenance for round-trip export)
+- Migration `1001_imports.sql`: `import_batches` and `import_rows` (provenance for round-trip export)
 - `NOTICE` with upstream MIT attribution
 - `crm table import <file.csv|-> --as <name> [--key col]`, `crm table list|show|export <name> [-f csv|tsv|json] [--only expr]`: workspace tables of rows kept in import order; filters `col>=70`, `col=value`, `col~regex`, `col!=` (repeatable, AND)
 - `crm column add <table> <name> --type input|formula|enrich [--waterfall p1,p2] [--from col] [--field path] [--expr template]`, `crm column list|rm`
 - `crm run <table> --columns a,b [--concurrency N] [--budget USD] [--dry-run] [--retry N] [--backoff D] [--resume RUN_ID]`, `crm run list|show <id> [--items]`: batch enrichment with provider waterfall (first non-empty answer wins), cache by (provider, input hash) consulted before spending, hard budget (reserve before calling), exponential backoff on 429/5xx/timeouts, per-item checkpoint and resume
 - Provider adapters: Exa (search/contents), Jina Reader, GitHub (users/orgs) and a generic `http` adapter (URL/body template + JSON path); `crm provider list|set` for prices, rates, credentials (env var names) and endpoints; `CRM_PROVIDER_<NAME>_URL` base URL override
-- Migration `003_data_plane.sql`: `workspaces`, `workspace_rows`, `workspace_columns`, `runs`, `run_items`, `enrichment_cache`, `providers` (seeded with exa, exa-contents, jina, github)
+- Migration `1002_data_plane.sql`: `workspaces`, `workspace_rows`, `workspace_columns`, `runs`, `run_items`, `enrichment_cache`, `providers` (seeded with exa, exa-contents, jina, github)
 - `ai` column type: `crm column add <table> <name> --type ai --prompt <file.md|text> --output text|score:MIN-MAX|enum:a|b|c|bool [--explain] [--waterfall llm,...]`; prompt `{{column}}` placeholders are checked at `column add` (unknown ones are a usage error); answers are stored typed (numbers, booleans, canonical enum values) so `--only "fit>=70"` works; `--explain` stores a 1–2 sentence reason in `<name>_reason`
 - `crm qualify <table> --criteria <file.md> [--explain] [--name qualified] [--budget USD] [--dry-run] [--only expr] [--waterfall p1,p2] [--concurrency N]`: yes/no/maybe decision column (plus reason column with `--explain`) computed through `crm run`; prints decision counts, tokens in/out and cost vs budget
 - `llm` provider kind: OpenAI-compatible chat completions with JSON answers (one repair request on an invalid answer, then the item fails); configured by `crm provider set <name> --model --price-in --price-out --max-tokens --base-url` or `CRM_LLM_BASE_URL`, `CRM_LLM_API_KEY`, `CRM_LLM_MODEL`, `CRM_LLM_PRICE_IN`, `CRM_LLM_PRICE_OUT`; cost = reported tokens × price per 1M tokens; the budget reserves the worst case (prompt bytes + max tokens, repair included)
 - `crm run --only expr` restricts a new run to matching rows; `crm run`, `run show` and `run show --items` report `tokens_in` / `tokens_out`
-- Migration `004_ai_columns.sql`: `run_items.tokens_in` / `tokens_out`, seeded `llm` provider (auth `CRM_LLM_API_KEY`)
+- Migration `1003_ai_columns.sql`: `run_items.tokens_in` / `tokens_out`, seeded `llm` provider (auth `CRM_LLM_API_KEY`)
 - Batch MCP tools next to the upstream one-entity tools: `crm_table_import` (CSV text or a rows array), `crm_rows_upsert_many`, `crm_table_query` (filters, columns, limit/offset, total), `crm_column_add` (several columns), `crm_run_start` (`dry_run`, budget, `wait: false` to return the run id at once), `crm_run_status` (several runs, optional items), `crm_qualify`, `crm_export` (csv/tsv/json text), `crm_push_dedupe`; arrays in, JSON out, errors reported per item
 - `crm mcp serve --http HOST:PORT [--token T]`: streamable HTTP transport at `/mcp`; bearer auth with `--token` or `CRM_MCP_TOKEN`, required when the address is not loopback; graceful shutdown on Ctrl-C
 - `crm push <table> --to person|org [--dedupe email|domain|fuzz] [--threshold 0.88] [--only expr] [--map col=field] [--dry-run]`: table rows become people or organizations, deduplicated against existing entities and earlier rows by normalized email, domain (from a domain, URL or email) or fuzzy name (accents, punctuation and Inc/LLC/Ltda… ignored); a match only fills empty fields
@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CLI data-plane commands (`table import|show|export`, `column add|list`, `run`, `run show`, `qualify`) and the MCP batch tools share one `internal/service` layer
 - `crm mcp serve` without `--http` keeps the stdio transport; it stops when stdin closes or on Ctrl-C
+
+### Fixed
+
+- Migrations are versioned by the number in their file name and tracked in `schema_migrations`, not by their position in the listing: the fork's migrations moved to `1001_`–`1003_` (upstream keeps 1–999), so a new upstream `002_*.sql` applies cleanly instead of making every existing fork database fail to open. Databases migrated by earlier builds are adopted on first open (fork migrations detected by their schema)
 
 ## [0.1.6] - 2026-03-08
 

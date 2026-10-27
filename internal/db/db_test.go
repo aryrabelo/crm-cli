@@ -56,7 +56,10 @@ func TestOpen_MigrationVersion(t *testing.T) {
 	require.NoError(t, err)
 	defer d.Close()
 
-	var version int
+	// Versions come from file names; user_version is the highest applied.
+	var version, highest int
 	_ = d.QueryRow("PRAGMA user_version").Scan(&version)
-	assert.Equal(t, 4, version)
+	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&highest))
+	assert.Equal(t, highest, version)
+	assert.GreaterOrEqual(t, highest, 1003)
 }
