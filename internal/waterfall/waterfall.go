@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/provider"
@@ -19,10 +20,12 @@ import (
 // through to the next provider (an exhausted budget, for example).
 var ErrHalt = errors.New("waterfall halted")
 
-// Step is one provider of a waterfall.
+// Step is one provider of a waterfall. TTL is how long its cached answers are
+// reused (0: forever); older entries count as missing.
 type Step struct {
 	Name    string
 	Adapter provider.Adapter
+	TTL     time.Duration
 }
 
 // CallFunc performs one (possibly retried) provider call and reports the
@@ -79,7 +82,7 @@ func (w *Waterfall) Run(ctx context.Context, in provider.Input, field string, ca
 	knownEmpty := make([]bool, len(w.Steps))
 	for i, s := range w.Steps {
 		keys[i] = s.Adapter.Key(in)
-		out, ok, err := w.Cache.Get(ctx, s.Name, keys[i])
+		out, ok, err := w.Cache.Get(ctx, s.Name, keys[i], s.TTL)
 		if err != nil {
 			return res, err
 		}
@@ -153,7 +156,7 @@ func (w *Waterfall) Estimate(ctx context.Context, in provider.Input, field strin
 	knownEmpty := make([]bool, len(w.Steps))
 	if known {
 		for i, s := range w.Steps {
-			out, ok, err := w.Cache.Get(ctx, s.Name, s.Adapter.Key(in))
+			out, ok, err := w.Cache.Get(ctx, s.Name, s.Adapter.Key(in), s.TTL)
 			if err != nil {
 				return est, err
 			}
@@ -191,11 +194,21 @@ type Cache struct {
 // NewCache creates a Cache.
 func NewCache(db repo.DBTX) *Cache { return &Cache{db: db} }
 
-// Get returns the cached answer of provider for key.
-func (c *Cache) Get(ctx context.Context, providerName string, key provider.Hash) (provider.Output, bool, error) {
+// cacheTime is the layout of enrichment_cache.fetched_at (SQLite
+// datetime('now'), UTC), which sorts as text.
+const cacheTime = "2006-01-02 15:04:05"
+
+// Get returns the cached answer of provider for key, unless it was fetched
+// more than ttl ago (ttl 0: any age).
+func (c *Cache) Get(ctx context.Context, providerName string, key provider.Hash, ttl time.Duration) (provider.Output, bool, error) {
+	q := "SELECT output FROM enrichment_cache WHERE provider = ? AND input_hash = ?"
+	args := []any{providerName, string(key)}
+	if ttl > 0 {
+		q += " AND fetched_at >= ?"
+		args = append(args, time.Now().UTC().Add(-ttl).Format(cacheTime))
+	}
 	var out string
-	err := c.db.QueryRowContext(ctx,
-		"SELECT output FROM enrichment_cache WHERE provider = ? AND input_hash = ?", providerName, string(key)).Scan(&out)
+	err := c.db.QueryRowContext(ctx, q, args...).Scan(&out)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -203,6 +216,31 @@ func (c *Cache) Get(ctx context.Context, providerName string, key provider.Hash)
 		return nil, false, fmt.Errorf("read enrichment cache: %w", err)
 	}
 	return provider.Output(out), true, nil
+}
+
+// Clear deletes cached answers, of providerName only when it is not empty and
+// fetched more than olderThan ago only when it is positive. It returns the
+// number of entries deleted.
+func (c *Cache) Clear(ctx context.Context, providerName string, olderThan time.Duration) (int64, error) {
+	q := "DELETE FROM enrichment_cache WHERE 1 = 1"
+	var args []any
+	if providerName != "" {
+		q += " AND provider = ?"
+		args = append(args, providerName)
+	}
+	if olderThan > 0 {
+		q += " AND fetched_at < ?"
+		args = append(args, time.Now().UTC().Add(-olderThan).Format(cacheTime))
+	}
+	res, err := c.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, fmt.Errorf("clear enrichment cache: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("clear enrichment cache: %w", err)
+	}
+	return n, nil
 }
 
 // Put stores (or refreshes) an answer.

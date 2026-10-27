@@ -55,6 +55,7 @@ func NewRootCmd() *cobra.Command {
 	registerColumnCommands(rootCmd)
 	registerRunCommands(rootCmd)
 	registerProviderCommands(rootCmd)
+	registerCacheCommands(rootCmd)
 	registerQualifyCommand(rootCmd)
 	registerPushCommand(rootCmd)
 	registerBenchCommands(rootCmd)

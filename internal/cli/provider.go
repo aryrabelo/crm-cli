@@ -119,6 +119,7 @@ func providerListCmd() *cobra.Command {
 
 func providerSetCmd() *cobra.Command {
 	var kind, price, authEnv, baseURL, endpoint, resource, url, method, body, path, authHeader, modelName, priceIn, priceOut string
+	var errorPath, okPath, cacheTTL string
 	var rate float64
 	var numResults, maxTokens int
 	var enabled bool
@@ -130,6 +131,12 @@ func providerSetCmd() *cobra.Command {
 Generic http providers: --url is a template where {{input}} becomes the
 query-escaped input; --body (JSON, sent with POST) gets the JSON-escaped input;
 --path is the dotted path of the answer inside the response ("data.0.email").
+An API that reports errors with HTTP 200 needs --error-path (the response is an
+error when that path is set: "error") or --ok-path (an error unless that path
+is set: "success"); such responses are charged but never cached.
+
+Every provider's answers are cached for --cache-ttl (default 30d; "0" never
+expires); older entries are fetched (and paid) again. See crm cache clear.
 
 llm providers (OpenAI-compatible chat completions): --model, --price-in and
 --price-out (USD per 1M prompt/completion tokens), --max-tokens (per call,
@@ -137,7 +144,7 @@ default 512), --base-url (default $CRM_LLM_BASE_URL or the OpenAI API).`,
 		Example: `  crm provider set exa --price 0.005
   crm provider set github --auth-env GITHUB_TOKEN --rate 1
   crm provider set clearbit --kind http --url "https://api.example.com/v1/company?domain={{input}}" \
-    --path data --auth-env EXAMPLE_KEY --price 0.01
+    --path data --error-path error --auth-env EXAMPLE_KEY --price 0.01 --cache-ttl 7d
   crm provider set llm --model gpt-4o-mini --price-in 0.15 --price-out 0.60
   crm provider set local --kind llm --base-url http://127.0.0.1:4000/v1 --model qwen3 \
     --price-in 0 --price-out 0 --auth-env LOCAL_LLM_KEY`,
@@ -183,6 +190,8 @@ default 512), --base-url (default $CRM_LLM_BASE_URL or the OpenAI API).`,
 				"resource": {&s.Resource, &resource}, "url": {&s.URL, &url},
 				"method": {&s.Method, &method}, "body": {&s.Body, &body},
 				"path": {&s.Path, &path}, "auth-header": {&s.AuthHeader, &authHeader},
+				"error-path": {&s.ErrorPath, &errorPath}, "ok-path": {&s.OKPath, &okPath},
+				"cache-ttl": {&s.CacheTTL, &cacheTTL},
 			} {
 				if f.Changed(flag) {
 					*pair[0] = *pair[1]
@@ -239,6 +248,9 @@ default 512), --base-url (default $CRM_LLM_BASE_URL or the OpenAI API).`,
 	f.StringVar(&body, "body", "", "http: JSON body template with {{input}}")
 	f.StringVar(&path, "path", "", "http: dotted path of the answer in the response")
 	f.StringVar(&authHeader, "auth-header", "", "http: header for the credential (default Authorization: Bearer)")
+	f.StringVar(&errorPath, "error-path", "", "http: dotted path that, when set in a 2xx response, makes it an error")
+	f.StringVar(&okPath, "ok-path", "", "http: dotted path that must be set (not empty, false or 0) in a 2xx response")
+	f.StringVar(&cacheTTL, "cache-ttl", "", `how long cached answers are reused, e.g. 7d or 12h ("0" never expires; default 30d)`)
 	f.StringVar(&modelName, "model", "", "llm: model name (default $CRM_LLM_MODEL)")
 	f.StringVar(&priceIn, "price-in", "", "llm: USD per 1M prompt tokens (0 for local/subscription)")
 	f.StringVar(&priceOut, "price-out", "", "llm: USD per 1M completion tokens (0 for local/subscription)")

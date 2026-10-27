@@ -54,7 +54,8 @@ internal/
     table.go                   # crm table import/list/show/export (fork: data plane)
     column.go                  # crm column add/list/rm, incl. ai columns (fork: data plane)
     run.go                     # crm run [--only], run list/show with tokens (fork: data plane)
-    provider.go                # crm provider list/set, incl. llm model/prices (fork: data plane)
+    provider.go                # crm provider list/set, incl. llm model/prices, error/ok paths, cache ttl (fork: data plane)
+    cache.go                   # crm cache clear [--provider] [--older-than] (fork: data plane)
     qualify.go                 # crm qualify: yes/no/maybe ai column (+ reason) run through crm run (fork: data plane)
     push.go                    # crm push: table rows → people/orgs with dedupe (fork: data plane)
     bench.go                   # crm bench run [--baseline per-entity] (fork: data plane)
@@ -107,7 +108,7 @@ internal/
     llm.go                     # OpenAI-compatible chat client; Bind(Contract) = JSON answer + 1 repair; token Usage via context
     limiter.go                 # Per-provider rate limiter
   waterfall/
-    waterfall.go               # Ordered providers, cache-first fallthrough, estimate; enrichment_cache store
+    waterfall.go               # Ordered providers, cache-first fallthrough, estimate; enrichment_cache store (TTL per step, Clear)
   column/
     column.go                  # Column types (input/formula/enrich/ai), validation, formula eval, Input/Cells/Sources, waterfall build
     ai.go                      # ai columns: --output spec, prompt validation/rendering, answer contract

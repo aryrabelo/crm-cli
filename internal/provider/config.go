@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/model"
@@ -42,6 +45,13 @@ type Settings struct {
 	// AuthHeader is the http header carrying the credential named by
 	// auth_ref. Empty means "Authorization: Bearer <token>".
 	AuthHeader string `json:"auth_header,omitempty"`
+	// ErrorPath (http) marks a 2xx response as an error when this dotted
+	// path holds a value that is not empty, false or 0 ("error",
+	// "errors.0.message"): the answer is not cached and the item fails.
+	ErrorPath string `json:"error_path,omitempty"`
+	// OKPath (http) marks a 2xx response as an error unless this dotted path
+	// holds a value that is not empty, false or 0 ("success", "status").
+	OKPath string `json:"ok_path,omitempty"`
 	// Model is the llm model (default: $CRM_LLM_MODEL).
 	Model string `json:"model,omitempty"`
 	// PriceInPerMTok and PriceOutPerMTok are the llm prices in USD per 1M
@@ -51,6 +61,41 @@ type Settings struct {
 	PriceOutPerMTok *float64 `json:"price_out_per_mtok,omitempty"`
 	// MaxTokens caps the completion tokens of one llm call (default 512).
 	MaxTokens int `json:"max_tokens,omitempty"`
+	// CacheTTL is how long a cached answer of this provider is reused: a
+	// duration ("720h", "30d"); "0" never expires; empty is DefaultCacheTTL.
+	CacheTTL string `json:"cache_ttl,omitempty"`
+}
+
+// DefaultCacheTTL is how long cached answers are reused when a provider sets
+// no cache_ttl. Older entries are treated as missing, so the provider is
+// called (and paid) again and the entry refreshed.
+const DefaultCacheTTL = 30 * 24 * time.Hour
+
+// TTL returns the cache lifetime of the provider's answers; 0 means they
+// never expire.
+func (s Settings) TTL() (time.Duration, error) {
+	if s.CacheTTL == "" {
+		return DefaultCacheTTL, nil
+	}
+	return ParseAge(s.CacheTTL)
+}
+
+// ParseAge parses a non-negative duration: Go syntax ("36h", "90m") or whole
+// days ("30d").
+func ParseAge(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("invalid duration %q (use e.g. 30d, 12h or 0)", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid duration %q (use e.g. 30d, 12h or 0)", s)
+	}
+	return d, nil
 }
 
 // Config is one row of the providers table.
@@ -135,6 +180,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Price < 0 {
 		return model.NewExitError(model.ErrValidation, "provider %s: price must be >= 0", c.Name)
+	}
+	if _, err := c.Settings.TTL(); err != nil {
+		return model.NewExitError(model.ErrValidation, "provider %s: cache ttl: %s", c.Name, err)
+	}
+	if c.Kind != "http" && (c.Settings.ErrorPath != "" || c.Settings.OKPath != "") {
+		return model.NewExitError(model.ErrValidation, "provider %s: error_path and ok_path apply to http providers only", c.Name)
 	}
 	switch c.Kind {
 	case "exa":

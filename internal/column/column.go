@@ -253,7 +253,11 @@ func (c *Column) Waterfall(ctx context.Context, providers *provider.Store, regis
 		} else if a, err = registry.Open(cfg); err != nil {
 			return nil, nil, err
 		}
-		wf.Steps = append(wf.Steps, waterfall.Step{Name: name, Adapter: a})
+		ttl, err := cfg.Settings.TTL()
+		if err != nil {
+			return nil, nil, model.NewExitError(model.ErrValidation, "provider %s: cache ttl: %s", name, err)
+		}
+		wf.Steps = append(wf.Steps, waterfall.Step{Name: name, Adapter: a, TTL: ttl})
 		configs = append(configs, cfg)
 	}
 	return wf, configs, nil

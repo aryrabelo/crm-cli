@@ -193,12 +193,13 @@ crm table export leads -f csv --only "score>=70"          # csv (default), tsv o
 crm column list leads                                     # type, definition, max cost per row, filled rows
 crm provider list
 crm provider set mine --kind http --url "https://api.example.com/v1/find?q={{input}}" --path data.email \
-  --auth-env EXAMPLE_KEY --price 0.002
+  --error-path error --auth-env EXAMPLE_KEY --price 0.002 --cache-ttl 7d
+crm cache clear --provider mine --older-than 7d           # forget cached answers (all of them without flags)
 ```
 
 - **Column types:** `input` (imported cells), `formula` (template evaluated on read; `{{col}}`, `{{col.json.path}}`), `enrich` (filled by `crm run`; `--from` is the input column, default the table key; `--field` keeps one value of the answer), `ai` (filled by `crm run` with an LLM answer per row — see below). `crm run --only expr` restricts a run to matching rows.
 - **Waterfall:** providers are tried in order; the first non-empty answer wins, errors and empty answers fall through, and the run item records which provider answered.
-- **Cache:** every answer is cached by (provider, input hash), and the cache is consulted for the whole waterfall before anything is spent — re-running costs `$0`.
+- **Cache:** every answer is cached by (provider, input hash), and the cache is consulted for the whole waterfall before anything is spent — re-running costs `$0`. Entries expire after the provider's `--cache-ttl` (default `30d`; `0` never expires): an expired entry is fetched, and paid, again. `crm cache clear [--provider P] [--older-than D]` deletes entries. An `http` API that reports errors with HTTP 200 needs `--error-path` (the response is an error when that path is set, e.g. `error`) or `--ok-path` (an error unless that path is set, e.g. `success`); such a response is charged, never cached, and fails the item. Without either, the body is taken as the answer (a missing `--path` is cached as "no data").
 - **Budget:** a call is made only after its price is reserved, so a run never spends more than `--budget`; items that do not fit are marked `skipped`. `--budget` is required whenever a run may spend money (`--dry-run` shows how much).
 - **Retry:** 429, 408, 5xx and network timeouts are retried `--retry` times (default 2) with exponential backoff from `--backoff` (default 500ms), honoring `Retry-After`. Failed calls cost nothing.
 - **Checkpoint/resume:** each row × column item is saved as it finishes; Ctrl-C leaves the run `interrupted`, and `crm run --resume <id>` processes only items that are not done.
