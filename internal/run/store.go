@@ -179,7 +179,8 @@ func (s *Store) List(ctx context.Context) ([]*Run, error) {
 
 // Items returns the items of a run ordered by row position, then column
 // order. With openOnly, only items that still need work (pending, failed,
-// skipped) are returned.
+// skipped) of columns that still exist are returned; RemovedColumns lists
+// the columns whose open items were left behind.
 func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item, error) {
 	q := `SELECT i.id, i.run_id, i.row_id, wr.position, i.column_id, c.name, i.status, i.attempts, i.calls,
 		i.value, i.provider, i.cache_hit, i.error, i.ms, i.cost_micros, i.tokens_in, i.tokens_out
@@ -188,7 +189,7 @@ func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item,
 		JOIN workspace_columns c ON c.id = i.column_id
 		WHERE i.run_id = ?`
 	if openOnly {
-		q += " AND i.status NOT IN ('ok', 'empty')"
+		q += " AND i.status NOT IN ('ok', 'empty') AND c.archived = 0"
 	}
 	q += " ORDER BY wr.position, i.id"
 	rows, err := s.db.QueryContext(ctx, q, runID)
@@ -208,6 +209,31 @@ func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item,
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate run items: %w", err)
+	}
+	return out, nil
+}
+
+// RemovedColumns returns the names of the columns of run runID that have
+// open items but were removed (crm column rm) since the run started, even
+// when a column with the same name was added again.
+func (s *Store) RemovedColumns(ctx context.Context, runID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT c.name FROM run_items i JOIN workspace_columns c ON c.id = i.column_id
+		 WHERE i.run_id = ? AND c.archived = 1 AND i.status NOT IN ('ok', 'empty') ORDER BY c.name`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("run %d removed columns: %w", runID, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan run column: %w", err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate run columns: %w", err)
 	}
 	return out, nil
 }

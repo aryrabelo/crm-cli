@@ -253,7 +253,7 @@ func (p *plan) estimate(ctx context.Context, open map[int64]map[int64]bool) (*Es
 
 func (e *Engine) openItems(ctx context.Context, runID int64) (*Run, []*Item, error) {
 	rs := NewStore(e.db)
-	r, err := rs.Get(ctx, runID)
+	r, err := e.resumable(ctx, rs, runID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -262,6 +262,26 @@ func (e *Engine) openItems(ctx context.Context, runID int64) (*Run, []*Item, err
 		return nil, nil, err
 	}
 	return r, items, nil
+}
+
+// resumable loads run runID and refuses it when a column it still has work
+// for was removed since (crm column rm, possibly re-added under the same
+// name): those items belong to a definition that no longer exists.
+func (e *Engine) resumable(ctx context.Context, rs *Store, runID int64) (*Run, error) {
+	r, err := rs.Get(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	removed, err := rs.RemovedColumns(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if len(removed) > 0 {
+		return nil, model.NewExitError(model.ErrValidation,
+			"run %d cannot be resumed: column(s) %s of table %s were removed (or removed and added again) after the run started; start a new run: crm run %s --columns %s",
+			r.ID, strings.Join(removed, ", "), r.Table, r.Table, strings.Join(r.Columns, ","))
+	}
+	return r, nil
 }
 
 // Result is the outcome of one Execute call.
@@ -296,7 +316,7 @@ func (e *Engine) Execute(ctx context.Context, opts Options) (*Result, error) {
 	var p *plan
 	var err error
 	if opts.Resume != 0 {
-		if r, err = rs.Get(ctx, opts.Resume); err != nil {
+		if r, err = e.resumable(ctx, rs, opts.Resume); err != nil {
 			return nil, err
 		}
 		if p, err = e.prepare(ctx, r.Table, r.Columns, nil, nil); err != nil {
@@ -571,6 +591,11 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 			return nil
 		}
 		t := w.plan.byColumn[it.ColumnID]
+		if t == nil {
+			// Not a column of this plan (removed since the run started;
+			// resumable refuses such runs). Leave the item untouched.
+			continue
+		}
 		start := time.Now()
 		in := t.col.Input(column.Materialize(w.plan.columns, data))
 
