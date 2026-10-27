@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `crm push <table> --to person|org [--dedupe email|domain|fuzz] [--threshold 0.88] [--only expr] [--map col=field] [--dry-run]`: table rows become people or organizations, deduplicated against existing entities and earlier rows by normalized email, domain (from a domain, URL or email) or fuzzy name (accents, punctuation and Inc/LLC/Ltda… ignored); a match only fills empty fields
 - `crm bench run [--tasks bench] [--baseline per-entity] [--transport inprocess|http] [-f table|json]`: runs the 10 task files in `bench/` through an MCP client against fake providers and prints tool calls, provider calls, tokens, cost, wall time, payload size and check per task, plus totals; `--baseline per-entity` compares the call count with the one-entity tools (54× fewer calls on the 4 tasks both can do)
 - `crm cache clear [--provider P] [--older-than D]`: delete cached provider answers; `crm provider set --cache-ttl D` (default `30d`, `0` never expires) and, for `http` providers, `--error-path` / `--ok-path`
+- `crm run` / `crm qualify --retry-uncertain` and MCP `retry_uncertain`: opt in to retrying paid POST calls that timed out after the request was sent; runs report `uncertain_spent` / items `uncertain` (migration `1005_uncertain_cost.sql`)
 
 ### Changed
 
@@ -43,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `crm run --resume` after `crm column rm` + `crm column add` with the same name crashed with a nil-pointer panic (and `--dry-run` silently estimated 0 items). Resume now refuses such a run with exit `2`, naming the removed column(s) and the command for a new run; open items of removed columns are never loaded
 - Security: item-level errors were stored and returned verbatim, so an `http` provider with `?key=…` in its URL leaked the key through `run_items.error`, `crm run show --items` and `crm_run_status` (Go's transport errors embed the full URL; error bodies may echo the key). Provider errors now drop URL query strings, userinfo and fragments, mask the request's credential values and credential-looking values, and are capped at 300 bytes, before they are stored and again on output
 - The enrichment cache never expired and could not be cleared, and an `http` API answering HTTP 200 with an error body had it cached as the answer (or as "no data") for good. Cached answers now expire after the provider's TTL (`fetched_at` is read), `--error-path`/`--ok-path` turn such bodies into charged, uncached item failures, and `crm cache clear` deletes entries
+- A call that timed out or lost its connection after the request was sent was recorded at `$0` and retried, so possibly-billed calls (up to 3 per item) were missing from the spend. Such a call is now counted at its reserved estimate and recorded as uncertain, and a paid non-idempotent call (POST: every llm call, `http` with a body) in that state is not retried by default. The `--budget` help text no longer promises the provider's bill: it caps the spend recorded at the configured prices
 
 ## [0.1.6] - 2026-03-08
 

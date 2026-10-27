@@ -37,7 +37,7 @@ var qualifyColumns = []format.ColumnDef{
 func qualifyCmd() *cobra.Command {
 	var criteria, name, budget string
 	var only, wf []string
-	var explain, dryRun bool
+	var explain, dryRun, retryUncertain bool
 	var concurrency, retry int
 	cmd := &cobra.Command{
 		Use:   "qualify <table> --criteria <file.md>",
@@ -65,7 +65,7 @@ decision counts, tokens in/out and cost vs budget.`,
 				return model.NewExitError(model.ErrValidation, "--concurrency must be at least 1")
 			}
 			opts := service.QualifyOptions{Table: args[0], Name: name, Explain: explain, Only: only, Waterfall: wf,
-				Concurrency: concurrency, Retry: retry, DryRun: dryRun}
+				Concurrency: concurrency, Retry: retry, RetryUncertain: retryUncertain, DryRun: dryRun}
 			if cmd.Flags().Changed("budget") {
 				b, err := provider.ParseUSD(budget)
 				if err != nil {
@@ -118,11 +118,12 @@ decision counts, tokens in/out and cost vs budget.`,
 	f.StringVar(&criteria, "criteria", "", "markdown file with the qualification criteria (required)")
 	f.BoolVar(&explain, "explain", false, "also store a 1–2 sentence reason per row in <name>_reason")
 	f.StringVar(&name, "name", service.DefaultQualifyColumn, "decision column name")
-	f.StringVar(&budget, "budget", "", "hard spending cap in USD for the run (e.g. 0.50)")
+	f.StringVar(&budget, "budget", "", "spending cap in USD for the run, at the configured token prices (e.g. 0.50; see crm run --help)")
 	f.BoolVar(&dryRun, "dry-run", false, "estimate calls, cost and cache hits; call nothing, write nothing")
 	f.StringArrayVar(&only, "only", nil, onlyHelp+"; only matching rows are qualified")
 	f.StringSliceVar(&wf, "waterfall", []string{"llm"}, "llm providers in order (see crm provider list)")
 	f.IntVar(&concurrency, "concurrency", run.DefaultConcurrency, "rows processed in parallel")
 	f.IntVar(&retry, "retry", run.DefaultRetry, "retries per llm call on 429/5xx/timeouts")
+	f.BoolVar(&retryUncertain, "retry-uncertain", false, "also retry paid llm calls that timed out after the request was sent (may pay twice)")
 	return cmd
 }

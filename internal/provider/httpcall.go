@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,24 +17,37 @@ const maxResponseBytes = 16 << 20
 // call performs req and classifies the outcome. A 404 is not an error: it
 // returns found=false so adapters can answer "no data" (and still charge).
 // 408, 429 and 5xx are retryable, as are transport failures and timeouts.
-// Error text never carries req's credentials: transport errors embed the
-// request URL and error bodies may echo it (redactRequest).
+// A failure after the request was written is marked Error.Sent: the provider
+// may have billed it. Error text never carries req's credentials: transport
+// errors embed the request URL and error bodies may echo it (redactRequest).
 func call(ctx context.Context, client *http.Client, req *http.Request) (body []byte, found bool, err error) {
-	resp, err := client.Do(req.WithContext(ctx))
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, false, ctx.Err()
+	var wrote atomic.Bool
+	trace := &httptrace.ClientTrace{WroteRequest: func(i httptrace.WroteRequestInfo) {
+		if i.Err == nil {
+			wrote.Store(true)
 		}
-		return nil, false, &Error{Retryable: true, Msg: redactRequest(err.Error(), req)}
+	}}
+	// unconfirmed is the error of a call that got no complete response.
+	unconfirmed := func(msg string, sent bool) error {
+		e := &Error{Retryable: true, Msg: redactRequest(msg, req), Sent: sent, Idempotent: idempotent(req.Method)}
+		if ctx.Err() != nil {
+			if !sent {
+				return ctx.Err()
+			}
+			e.Retryable, e.cause = false, ctx.Err()
+		}
+		return e
+	}
+
+	resp, err := client.Do(req.WithContext(httptrace.WithClientTrace(ctx, trace)))
+	if err != nil {
+		return nil, false, unconfirmed(err.Error(), wrote.Load())
 	}
 	defer resp.Body.Close()
 
 	body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, false, ctx.Err()
-		}
-		return nil, false, &Error{Retryable: true, Msg: redactRequest("read response: "+err.Error(), req)}
+		return nil, false, unconfirmed("read response: "+err.Error(), true)
 	}
 
 	switch {
@@ -99,4 +114,14 @@ func rateLimitReset(h http.Header) time.Duration {
 // not set; it is not retryable, so a waterfall falls through immediately.
 func errMissingAuth(name, env string) error {
 	return &Error{Msg: fmt.Sprintf("%s: environment variable %s is not set", name, env)}
+}
+
+// idempotent reports whether a request with method may be repeated without
+// side effects.
+func idempotent(method string) bool {
+	switch method {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	return false
 }

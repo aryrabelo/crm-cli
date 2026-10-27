@@ -59,6 +59,10 @@ type Options struct {
 	// LeaseTimeout is how long the executor's heartbeat may be silent before
 	// another executor may take the run over (0: DefaultLeaseTimeout).
 	LeaseTimeout time.Duration
+	// RetryUncertain retries paid non-idempotent calls (POST) that got no
+	// response after the request was sent. Off by default: the provider may
+	// have billed the first attempt, so a retry may pay twice.
+	RetryUncertain bool
 }
 
 // Engine runs and estimates batch runs.
@@ -547,6 +551,9 @@ type worker struct {
 
 // call is the waterfall CallFunc: reserve budget, respect the provider's
 // rate, call, settle, and retry retryable errors with exponential backoff.
+// A call that got no response after the request was sent may have been
+// billed: it settles at its reserved estimate (recorded as uncertain), and a
+// paid non-idempotent one is not retried unless Options.RetryUncertain.
 func (w *worker) call(ctx context.Context, step waterfall.Step, in provider.Input) (provider.Output, provider.Cost, int, error) {
 	est := step.Adapter.Estimate(in)
 	var total provider.Cost
@@ -561,6 +568,11 @@ func (w *worker) call(ctx context.Context, step waterfall.Step, in provider.Inpu
 		}
 		out, cost, err := step.Adapter.Enrich(ctx, in)
 		attempts++
+		sent, idempotent := provider.Unconfirmed(err)
+		if sent && cost < est {
+			addUncertain(ctx, est-cost)
+			cost = est
+		}
 		w.budget.settle(est, cost)
 		total += cost
 		if err == nil {
@@ -570,12 +582,30 @@ func (w *worker) call(ctx context.Context, step waterfall.Step, in provider.Inpu
 			return nil, total, attempts, ctx.Err()
 		}
 		retry, hint := provider.Retryable(err)
+		if sent && !idempotent && est > 0 && !w.opts.RetryUncertain {
+			return nil, total, attempts, fmt.Errorf("%w (sent without a response: charged at the estimate %s and not retried; --retry-uncertain retries)", err, est)
+		}
 		if !retry || attempts > w.opts.Retry {
 			return nil, total, attempts, err
 		}
 		if err := sleep(ctx, backoff(w.opts.Backoff, attempts-1, hint)); err != nil {
 			return nil, total, attempts, err
 		}
+	}
+}
+
+type uncertainKey struct{}
+
+// withUncertain returns a context whose calls add their unconfirmed cost to
+// the returned total (one item's waterfall runs on one goroutine).
+func withUncertain(ctx context.Context) (context.Context, *provider.Cost) {
+	c := new(provider.Cost)
+	return context.WithValue(ctx, uncertainKey{}, c), c
+}
+
+func addUncertain(ctx context.Context, c provider.Cost) {
+	if total, ok := ctx.Value(uncertainKey{}).(*provider.Cost); ok {
+		*total += c
 	}
 }
 
@@ -599,7 +629,7 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 		start := time.Now()
 		in := t.col.Input(column.Materialize(w.plan.columns, data))
 
-		it.Attempts, it.Calls, it.Cost, it.CacheHit = 0, 0, 0, false
+		it.Attempts, it.Calls, it.Cost, it.Uncertain, it.CacheHit = 0, 0, 0, 0, false
 		it.TokensIn, it.TokensOut = 0, 0
 		it.Value, it.Provider, it.Error = nil, nil, nil
 		var cells map[string]any // nil: no cell is written
@@ -608,9 +638,11 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 			cells = t.col.Cells(nil)
 		} else {
 			callCtx, usage := provider.WithUsage(ctx)
+			callCtx, uncertain := withUncertain(callCtx)
 			res, err := t.wf.Run(callCtx, in, t.col.Config.Field, w.call)
 			it.TokensIn, it.TokensOut = usage.Tokens()
 			it.Attempts, it.Calls, it.Cost, it.CacheHit = res.Attempts, res.Calls, res.Cost, res.CacheHit
+			it.Uncertain = *uncertain
 			switch {
 			case errors.Is(err, ErrBudgetExhausted):
 				it.Status = ItemSkipped

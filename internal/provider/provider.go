@@ -77,6 +77,14 @@ type Error struct {
 	Retryable  bool
 	RetryAfter time.Duration
 	Msg        string
+	// Sent is set when the request was written but no complete response
+	// came back (timeout, connection reset, cancelled while waiting): the
+	// provider may have processed, and billed, it.
+	Sent bool
+	// Idempotent is set when the request method is safe to repeat (GET,
+	// HEAD, OPTIONS).
+	Idempotent bool
+	cause      error
 }
 
 func (e *Error) Error() string {
@@ -86,6 +94,9 @@ func (e *Error) Error() string {
 	return e.Msg
 }
 
+// Unwrap returns the context error of a call cancelled after it was sent.
+func (e *Error) Unwrap() error { return e.cause }
+
 // Retryable reports whether err is worth another attempt and the delay the
 // provider asked for (0 when it gave none).
 func Retryable(err error) (bool, time.Duration) {
@@ -94,6 +105,16 @@ func Retryable(err error) (bool, time.Duration) {
 		return pe.Retryable, pe.RetryAfter
 	}
 	return false, 0
+}
+
+// Unconfirmed reports whether err is a call that was sent without a
+// confirmed outcome (see Error.Sent), and whether repeating it is safe.
+func Unconfirmed(err error) (sent, idempotent bool) {
+	var pe *Error
+	if errors.As(err, &pe) {
+		return pe.Sent, pe.Idempotent
+	}
+	return false, false
 }
 
 // hashKey derives a cache key from the adapter kind, its answer-shaping

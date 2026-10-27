@@ -36,18 +36,22 @@ const (
 
 // Stats aggregates the items of a run.
 type Stats struct {
-	Items      int            `json:"items"`
-	OK         int            `json:"ok"`
-	Empty      int            `json:"empty"`
-	Failed     int            `json:"failed"`
-	Skipped    int            `json:"skipped"`
-	Pending    int            `json:"pending"`
-	CacheHits  int            `json:"cache_hits"`
-	Calls      int            `json:"calls"`
-	TokensIn   int64          `json:"tokens_in"`
-	TokensOut  int64          `json:"tokens_out"`
-	DurationMS int64          `json:"duration_ms"`
-	Providers  map[string]int `json:"providers"`
+	Items     int   `json:"items"`
+	OK        int   `json:"ok"`
+	Empty     int   `json:"empty"`
+	Failed    int   `json:"failed"`
+	Skipped   int   `json:"skipped"`
+	Pending   int   `json:"pending"`
+	CacheHits int   `json:"cache_hits"`
+	Calls     int   `json:"calls"`
+	TokensIn  int64 `json:"tokens_in"`
+	TokensOut int64 `json:"tokens_out"`
+	// Uncertain counts the items with an unconfirmed cost; UncertainMicros
+	// is that cost (included in the run's spent total).
+	Uncertain       int            `json:"uncertain,omitempty"`
+	UncertainMicros int64          `json:"uncertain_micros,omitempty"`
+	DurationMS      int64          `json:"duration_ms"`
+	Providers       map[string]int `json:"providers"`
 }
 
 // Run is one batch execution over rows × columns.
@@ -82,6 +86,9 @@ type Item struct {
 	Error       *string       `json:"error"`
 	MS          int64         `json:"ms"`
 	Cost        provider.Cost `json:"-"`
+	// Uncertain is the part of Cost that is not confirmed: calls that got no
+	// response after the request was sent, charged at their estimate.
+	Uncertain provider.Cost `json:"-"`
 	// TokensIn and TokensOut are the llm tokens of the calls made (ai columns).
 	TokensIn  int64 `json:"tokens_in"`
 	TokensOut int64 `json:"tokens_out"`
@@ -183,7 +190,7 @@ func (s *Store) List(ctx context.Context) ([]*Run, error) {
 // the columns whose open items were left behind.
 func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item, error) {
 	q := `SELECT i.id, i.run_id, i.row_id, wr.position, i.column_id, c.name, i.status, i.attempts, i.calls,
-		i.value, i.provider, i.cache_hit, i.error, i.ms, i.cost_micros, i.tokens_in, i.tokens_out
+		i.value, i.provider, i.cache_hit, i.error, i.ms, i.cost_micros, i.uncertain_micros, i.tokens_in, i.tokens_out
 		FROM run_items i
 		JOIN workspace_rows wr ON wr.id = i.row_id
 		JOIN workspace_columns c ON c.id = i.column_id
@@ -201,7 +208,7 @@ func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item,
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.RunID, &it.RowID, &it.RowPosition, &it.ColumnID, &it.Column, &it.Status,
-			&it.Attempts, &it.Calls, &it.Value, &it.Provider, &it.CacheHit, &it.Error, &it.MS, &it.Cost,
+			&it.Attempts, &it.Calls, &it.Value, &it.Provider, &it.CacheHit, &it.Error, &it.MS, &it.Cost, &it.Uncertain,
 			&it.TokensIn, &it.TokensOut); err != nil {
 			return nil, fmt.Errorf("scan run item: %w", err)
 		}
@@ -243,10 +250,10 @@ func (s *Store) RemovedColumns(ctx context.Context, runID int64) ([]string, erro
 func (s *Store) SaveItem(ctx context.Context, it *Item) error {
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE run_items SET status = ?, attempts = attempts + ?, calls = calls + ?, value = ?, provider = ?,
-		   cache_hit = ?, error = ?, ms = ?, cost_micros = cost_micros + ?, tokens_in = tokens_in + ?,
-		   tokens_out = tokens_out + ?, updated_at = datetime('now')
+		   cache_hit = ?, error = ?, ms = ?, cost_micros = cost_micros + ?, uncertain_micros = uncertain_micros + ?,
+		   tokens_in = tokens_in + ?, tokens_out = tokens_out + ?, updated_at = datetime('now')
 		 WHERE id = ?`,
-		it.Status, it.Attempts, it.Calls, it.Value, it.Provider, it.CacheHit, it.Error, it.MS, it.Cost,
+		it.Status, it.Attempts, it.Calls, it.Value, it.Provider, it.CacheHit, it.Error, it.MS, it.Cost, it.Uncertain,
 		it.TokensIn, it.TokensOut, it.ID); err != nil {
 		return fmt.Errorf("save run item %d: %w", it.ID, err)
 	}
@@ -300,6 +307,11 @@ func (s *Store) Stats(ctx context.Context, runID int64) (Stats, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return st, fmt.Errorf("iterate run stats: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*), COALESCE(SUM(uncertain_micros), 0) FROM run_items WHERE run_id = ? AND uncertain_micros > 0",
+		runID).Scan(&st.Uncertain, &st.UncertainMicros); err != nil {
+		return st, fmt.Errorf("run %d uncertain cost: %w", runID, err)
 	}
 	return st, nil
 }

@@ -285,6 +285,8 @@ type runStartArgs struct {
 	Wait        *bool    `json:"wait,omitempty" jsonschema_description:"Wait for the run to finish (default true); false returns the run id at once"`
 	Concurrency int      `json:"concurrency,omitempty" jsonschema_description:"Rows processed in parallel (default 4)"`
 	Retry       *int     `json:"retry,omitempty" jsonschema_description:"Retries per provider call on 429/5xx/timeouts (default 2)"`
+	// RetryUncertain: see run.Options.RetryUncertain.
+	RetryUncertain bool `json:"retry_uncertain,omitempty" jsonschema_description:"Also retry paid POST calls that timed out after the request was sent (may pay twice; default false)"`
 }
 
 func estimateData(est *run.Estimate) map[string]any {
@@ -300,7 +302,8 @@ func (s *Server) runStart(ctx context.Context, req gomcp.CallToolRequest) (*gomc
 	if r := bind(req, &a); r != nil {
 		return r, nil
 	}
-	opts := run.Options{Table: a.Table, Columns: a.Columns, Only: a.Filters, Concurrency: a.Concurrency, Retry: retryOr(a.Retry)}
+	opts := run.Options{Table: a.Table, Columns: a.Columns, Only: a.Filters, Concurrency: a.Concurrency, Retry: retryOr(a.Retry),
+		RetryUncertain: a.RetryUncertain}
 	opts.Budget, opts.BudgetSet = budgetOpts(a.Budget)
 	engine := s.svc.Engine()
 	if a.DryRun {
@@ -388,6 +391,8 @@ type qualifyArgs struct {
 	DryRun      bool     `json:"dry_run,omitempty"`
 	Concurrency int      `json:"concurrency,omitempty"`
 	Retry       *int     `json:"retry,omitempty"`
+	// RetryUncertain: see run.Options.RetryUncertain.
+	RetryUncertain bool `json:"retry_uncertain,omitempty" jsonschema_description:"Also retry paid llm calls that timed out after the request was sent (may pay twice; default false)"`
 }
 
 func (s *Server) qualify(ctx context.Context, req gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
@@ -396,7 +401,7 @@ func (s *Server) qualify(ctx context.Context, req gomcp.CallToolRequest) (*gomcp
 		return r, nil
 	}
 	opts := service.QualifyOptions{Table: a.Table, Criteria: a.Criteria, Name: a.Name, Explain: a.Explain, Only: a.Filters,
-		Waterfall: a.Waterfall, Concurrency: a.Concurrency, Retry: retryOr(a.Retry), DryRun: a.DryRun}
+		Waterfall: a.Waterfall, Concurrency: a.Concurrency, Retry: retryOr(a.Retry), RetryUncertain: a.RetryUncertain, DryRun: a.DryRun}
 	opts.Budget, opts.BudgetSet = budgetOpts(a.Budget)
 	res, err := s.svc.Qualify(ctx, opts)
 	if err != nil {

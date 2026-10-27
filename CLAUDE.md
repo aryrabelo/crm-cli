@@ -68,6 +68,7 @@ internal/
       1002_data_plane.sql      # Tables, columns, runs, run items, cache, providers (fork: data plane)
       1003_ai_columns.sql      # run_items tokens_in/out, seeded llm provider (fork: data plane)
       1004_run_lease.sql       # runs.owner/heartbeat_at: one executor per run (fork: data plane)
+      1005_uncertain_cost.sql  # run_items.uncertain_micros: calls sent without a response, charged at the estimate (fork: data plane)
     repo/
       person.go                # Person repository
       org.go                   # Organization repository
@@ -117,10 +118,10 @@ internal/
     import.go                  # CSV → table rows (order kept, upsert by key)
     filter.go                  # --only filter expressions + materialized views
   run/
-    store.go                   # runs + run_items (checkpoints), stats
+    store.go                   # runs + run_items (checkpoints, uncertain cost), stats
     budget.go                  # Hard budget (reserve/settle), backoff
     lease.go                   # Run lease: atomic Claim (owner + heartbeat CAS), Heartbeat, Release, stale takeover
-    engine.go                  # Worker pool, retry, dry-run estimate, resume
+    engine.go                  # Worker pool, retry (no retry of a sent paid POST unless RetryUncertain), dry-run estimate, resume
   model/
     types.go                   # Domain types, constants, enums
     errors.go                  # Error types with exit codes

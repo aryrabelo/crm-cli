@@ -50,7 +50,9 @@ type QualifyOptions struct {
 	BudgetSet   bool
 	Concurrency int
 	Retry       int
-	DryRun      bool
+	// RetryUncertain: see run.Options.RetryUncertain.
+	RetryUncertain bool
+	DryRun         bool
 }
 
 // QualifyResult is a dry-run estimate (Estimate) or a finished run (Run)
@@ -116,7 +118,7 @@ func (s *Service) Qualify(ctx context.Context, opts QualifyOptions) (*QualifyRes
 	res.Redefine = c.ID != 0
 
 	runOpts := run.Options{Table: ws.Name, Columns: []string{name}, Concurrency: opts.Concurrency, Retry: opts.Retry,
-		Only: opts.Only, Budget: opts.Budget, BudgetSet: opts.BudgetSet}
+		Only: opts.Only, Budget: opts.Budget, BudgetSet: opts.BudgetSet, RetryUncertain: opts.RetryUncertain}
 	engine := s.Engine()
 	if opts.DryRun {
 		preview := []*column.Column{c}
