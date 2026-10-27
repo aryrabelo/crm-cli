@@ -9,7 +9,6 @@ import (
 	"maps"
 	"slices"
 	"strconv"
-	"sync"
 
 	"github.com/invopop/jsonschema"
 	"github.com/jdanielnd/crm-cli/internal/csvio"
@@ -326,7 +325,7 @@ func (s *Server) runStart(ctx context.Context, req gomcp.CallToolRequest) (*gomc
 		return toolError(err)
 	}
 	opts.Resume, opts.Only = r.ID, nil
-	s.runs.start(r.ID, func(bg context.Context) error {
+	s.runs.Start(r.ID, func(bg context.Context) error {
 		_, err := engine.Execute(bg, opts)
 		return err
 	})
@@ -359,7 +358,11 @@ func (s *Server) runStatus(ctx context.Context, req gomcp.CallToolRequest) (*gom
 	for i, id := range a.RunIDs {
 		res := &results[i]
 		res.RunID = id
-		res.Active, res.Error = s.runs.state(id)
+		var runErr error
+		res.Active, runErr = s.runs.State(id)
+		if runErr != nil {
+			res.Error = errText(runErr)
+		}
 		r, err := s.svc.RunStatus(ctx, id)
 		if err != nil {
 			res.Error = errText(err)
@@ -470,50 +473,6 @@ func (s *Server) pushDedupe(ctx context.Context, req gomcp.CallToolRequest) (*go
 		return toolError(err)
 	}
 	return jsonResult(res)
-}
-
-// runTracker owns the runs started with wait=false: they execute on a
-// context that Close cancels (leaving them interrupted and resumable).
-type runTracker struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mu     sync.Mutex
-	active map[int64]bool
-	errs   map[int64]string
-}
-
-func newRunTracker() *runTracker {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &runTracker{ctx: ctx, cancel: cancel, active: map[int64]bool{}, errs: map[int64]string{}}
-}
-
-func (t *runTracker) start(id int64, fn func(context.Context) error) {
-	t.mu.Lock()
-	t.active[id] = true
-	t.mu.Unlock()
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
-		err := fn(t.ctx)
-		t.mu.Lock()
-		defer t.mu.Unlock()
-		delete(t.active, id)
-		if err != nil {
-			t.errs[id] = errText(err)
-		}
-	}()
-}
-
-func (t *runTracker) state(id int64) (active bool, errMsg string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.active[id], t.errs[id]
-}
-
-func (t *runTracker) close() {
-	t.cancel()
-	t.wg.Wait()
 }
 
 // errText is the client-facing message of err: the message of a not found,

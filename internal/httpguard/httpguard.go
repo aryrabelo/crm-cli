@@ -1,6 +1,6 @@
 // Package httpguard protects the local HTTP servers of crm (the MCP
-// streamable transport, and any later browser-facing server) against DNS
-// rebinding, cross-site requests and oversized or slow bodies.
+// streamable transport and the crm ui web server) against DNS rebinding,
+// cross-site requests and oversized or slow bodies.
 //
 // Every request must:
 //   - carry an allowlisted Host (on a loopback bind: 127.0.0.1, localhost or
@@ -8,13 +8,15 @@
 //     127.0.0.1 is refused;
 //   - carry no Origin, the opaque "null" Origin, an allowlisted Origin, or an
 //     Origin naming the request's own Host;
-//   - carry "Authorization: Bearer <token>" (a token is always required).
+//   - carry "Authorization: Bearer <token>" (Wrap: a token is always
+//     required; only WrapPublic, for data-free static files, skips it).
 //
 // Host and Origin failures answer 403, a missing or wrong token 401. Bodies
 // are capped at MaxBodyBytes.
 package httpguard
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -112,11 +114,32 @@ func Wrap(cfg Config, next http.Handler) (http.Handler, error) {
 	if cfg.Token == "" {
 		return nil, errors.New("httpguard: a bearer token is required")
 	}
+	want := []byte("Bearer " + cfg.Token)
+	return guard(cfg, func(w http.ResponseWriter, r *http.Request) bool {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="crm"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return false
+		}
+		return true
+	}, next), nil
+}
+
+// WrapPublic returns next behind the Host/Origin checks and the body cap of
+// cfg, without the token. It is for responses that hold no data and that a
+// browser must load before it has a token (the static files of a web UI); a
+// page on a rebound or foreign name still cannot load them.
+func WrapPublic(cfg Config, next http.Handler) http.Handler {
+	return guard(cfg, nil, next)
+}
+
+// guard checks Host and Origin, then auth (when not nil), caps the body and
+// calls next.
+func guard(cfg Config, auth func(http.ResponseWriter, *http.Request) bool, next http.Handler) http.Handler {
 	limit := cfg.MaxBodyBytes
 	if limit <= 0 {
 		limit = DefaultMaxBodyBytes
 	}
-	want := []byte("Bearer " + cfg.Token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if len(cfg.Hosts) > 0 && !slices.Contains(cfg.Hosts, strings.ToLower(r.Host)) {
 			http.Error(w, "forbidden: unexpected Host", http.StatusForbidden)
@@ -126,9 +149,7 @@ func Wrap(cfg Config, next http.Handler) (http.Handler, error) {
 			http.Error(w, "forbidden: cross-origin request", http.StatusForbidden)
 			return
 		}
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="crm"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		if auth != nil && !auth(w, r) {
 			return
 		}
 		if r.ContentLength > limit {
@@ -137,7 +158,7 @@ func Wrap(cfg Config, next http.Handler) (http.Handler, error) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		next.ServeHTTP(w, r)
-	}), nil
+	})
 }
 
 // originAllowed accepts requests without Origin (non-browser clients), the
@@ -161,5 +182,41 @@ func NewServer(h http.Handler) *http.Server {
 		ReadHeaderTimeout: ReadHeaderTimeout,
 		ReadTimeout:       ReadTimeout,
 		IdleTimeout:       IdleTimeout,
+	}
+}
+
+// Serve listens on addr and serves the handler that build returns for the
+// listener's Config (ForListener: loopback Host/Origin allowlists on a
+// loopback bind) until ctx is cancelled, then shuts down gracefully. token
+// is required. ready (optional) receives the bound address once listening.
+func Serve(ctx context.Context, addr, token string, build func(Config) (http.Handler, error), ready func(net.Addr)) error {
+	if token == "" {
+		return errors.New("httpguard: a bearer token is required")
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	h, err := build(ForListener(token, ln))
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	srv := NewServer(h)
+	if ready != nil {
+		ready(ln.Addr())
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Serve(ln) }()
+	select {
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdown)
+	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	}
 }

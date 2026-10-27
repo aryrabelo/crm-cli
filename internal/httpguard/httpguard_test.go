@@ -103,6 +103,19 @@ func TestWrap_BodyLimit(t *testing.T) {
 	assert.Equal(t, http.StatusRequestEntityTooLarge, do(t, hs, "", "", "Bearer tok", "0123456789A"))
 }
 
+func TestWrapPublic_ChecksHostAndOriginButNoToken(t *testing.T) {
+	hs := httptest.NewUnstartedServer(nil)
+	hs.Config.Handler = httpguard.WrapPublic(httpguard.Loopback("tok", hs.Listener.Addr()),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	hs.Start()
+	t.Cleanup(hs.Close)
+	_, port, _ := net.SplitHostPort(hs.Listener.Addr().String())
+	assert.Equal(t, http.StatusNoContent, do(t, hs, "", "", "", ""))
+	assert.Equal(t, http.StatusNoContent, do(t, hs, "localhost:"+port, "", "", ""))
+	assert.Equal(t, http.StatusForbidden, do(t, hs, "attacker:"+port, "", "", ""))
+	assert.Equal(t, http.StatusForbidden, do(t, hs, "", "https://evil.example", "", ""))
+}
+
 func TestNewServer_Timeouts(t *testing.T) {
 	s := httpguard.NewServer(http.NotFoundHandler())
 	assert.Equal(t, httpguard.ReadHeaderTimeout, s.ReadHeaderTimeout)
