@@ -2,13 +2,18 @@
 
 ![crm banner](.github/banner-crm-cli.png)
 
-[![CI](https://github.com/jdanielnd/crm-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jdanielnd/crm-cli/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/jdanielnd/crm-cli)](https://goreportcard.com/report/github.com/jdanielnd/crm-cli)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/aryrabelo/crm-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/aryrabelo/crm-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](NOTICE)
 
 A local-first personal CRM that lives in your terminal. Manage contacts, organizations, interactions, deals, and tasks — all from the command line. Ships with a built-in [MCP server](https://modelcontextprotocol.io/) so AI agents like Claude can read and update your CRM directly.
 
 Single static binary. SQLite database. No cloud. No accounts. Your data stays on your machine.
+
+## About this fork
+
+This is **[aryrabelo/crm-cli](https://github.com/aryrabelo/crm-cli)**, a fork of [jdanielnd/crm-cli](https://github.com/jdanielnd/crm-cli) (MIT; terms in [`NOTICE`](NOTICE)). The person/org/deal/task CRM is upstream's; the fork adds the data plane: `crm table`, `crm column`, `crm run`, `crm provider`, `crm cache`, `crm qualify`, `crm push`, `crm bench`, and the batch MCP tools over stdio and HTTP.
+
+The upstream binaries (`brew install jdanielnd/tap/crm`, GitHub Releases of jdanielnd/crm-cli, `go install github.com/jdanielnd/crm-cli/cmd/crm@latest`) do **not** have these commands. The fork keeps upstream's Go module path (`github.com/jdanielnd/crm-cli`), so `go install github.com/aryrabelo/crm-cli/cmd/crm@<ref>` fails with `module declares its path as: github.com/jdanielnd/crm-cli but was required as: github.com/aryrabelo/crm-cli`. Build it from a checkout instead (see [Install](#install)).
 
 ## Features
 
@@ -28,16 +33,17 @@ Single static binary. SQLite database. No cloud. No accounts. Your data stays on
 
 ## Install
 
+The fork is built from source (Go 1.24+, no CGO):
+
 ```bash
-# Homebrew (macOS/Linux)
-brew install jdanielnd/tap/crm
-
-# Go
-go install github.com/jdanielnd/crm-cli/cmd/crm@latest
-
-# Or download a binary from GitHub Releases
-# https://github.com/jdanielnd/crm-cli/releases
+git clone https://github.com/aryrabelo/crm-cli.git
+cd crm-cli
+git checkout <branch-or-tag>     # one that contains the data-plane commands
+go build -o crm ./cmd/crm        # or: go install ./cmd/crm  (installs to $(go env GOPATH)/bin)
+./crm table --help               # present in the fork, absent from the upstream binary
 ```
+
+The upstream `crm` (Homebrew `jdanielnd/tap/crm`, jdanielnd/crm-cli releases) has the CRM commands only.
 
 ## Quick Start
 
@@ -322,14 +328,14 @@ Then copy [`AGENT.md`](AGENT.md) into your project as `CLAUDE.md` so Claude know
 {
   "mcpServers": {
     "crm": {
-      "command": "/opt/homebrew/bin/crm",
+      "command": "/Users/you/go/bin/crm",
       "args": ["mcp", "serve"]
     }
   }
 }
 ```
 
-> **Note:** Use the full path to the binary. Homebrew on Apple Silicon installs to `/opt/homebrew/bin/crm`, on Intel Macs to `/usr/local/bin/crm`. Run `which crm` to find yours.
+> **Note:** Use the full path to the fork's binary: where you put `crm` from `go build`, or `$(go env GOPATH)/bin/crm` after `go install ./cmd/crm`. Run `which crm` to find yours. A Homebrew `crm` is the upstream binary, without the batch tools.
 
 3. Restart Claude Desktop
 
@@ -464,13 +470,13 @@ SQLite WAL mode handles concurrent reads well, but avoid writing from two machin
 ## Building from Source
 
 ```bash
-git clone https://github.com/jdanielnd/crm-cli.git
+git clone https://github.com/aryrabelo/crm-cli.git
 cd crm-cli
 go build -o crm ./cmd/crm
 go test ./...
 ```
 
-Requires Go 1.23+. No CGO — builds anywhere Go runs.
+Requires Go 1.24+ (`go.mod`). No CGO — builds anywhere Go runs.
 
 ## Tech Stack
 
