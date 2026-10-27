@@ -38,6 +38,40 @@ func ReasonColumn(name string) string { return name + "_reason" }
 // AddColumn declares a column on a table: enrich columns read the table key
 // by default, ai columns default to text answers from the llm provider.
 func (s *Service) AddColumn(ctx context.Context, tableName string, spec ColumnSpec) (*column.Column, error) {
+	c, err := s.buildColumn(ctx, tableName, spec)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.saveColumn(ctx, c, false); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// PreviewColumn builds the column spec declares, exactly as AddColumn would
+// save it, and validates it against the table's columns without saving it:
+// the run.Options.Preview of an estimate made before the column exists.
+func (s *Service) PreviewColumn(ctx context.Context, tableName string, spec ColumnSpec) (*column.Column, error) {
+	c, err := s.buildColumn(ctx, tableName, spec)
+	if err != nil {
+		return nil, err
+	}
+	cols, err := table.NewStore(s.db).Columns(ctx, c.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if r := c.Config.Reason; r != "" && !slices.ContainsFunc(cols, func(o *column.Column) bool { return o.Name == r }) {
+		cols = append(cols, &column.Column{WorkspaceID: c.WorkspaceID, Name: r, Type: column.Input})
+	}
+	if err := c.Validate(cols); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// buildColumn turns spec into the column of table tableName, defaults
+// applied.
+func (s *Service) buildColumn(ctx context.Context, tableName string, spec ColumnSpec) (*column.Column, error) {
 	t, err := column.ParseType(spec.Type)
 	if err != nil {
 		return nil, err
@@ -71,9 +105,6 @@ func (s *Service) AddColumn(ctx context.Context, tableName string, spec ColumnSp
 		if spec.Explain {
 			c.Config.Reason = ReasonColumn(c.Name)
 		}
-	}
-	if err := s.saveColumn(ctx, c, false); err != nil {
-		return nil, err
 	}
 	return c, nil
 }

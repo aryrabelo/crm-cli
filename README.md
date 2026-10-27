@@ -254,6 +254,35 @@ crm push companies --to org --dedupe fuzz --threshold 0.9   # similar names: "AC
 
 Columns map to fields as in `crm import` (aliases such as `name`, `email`, `company`, `website`; other columns become custom fields; `--map col=field` overrides). Each row is matched against existing entities and against the rows pushed before it, so duplicates inside the table merge too. A match keeps its values: the row only fills empty fields and custom fields it does not have yet. Rows without a name or dedupe key are reported per row and skipped. Exit code `2` when no column maps to the dedupe field.
 
+## Spreadsheet UI (crm ui)
+
+`crm ui` opens your tables as a spreadsheet in the browser, served by the same binary (no Node, no install, works offline). It is a view over the same commands: anything it does, `crm table`, `crm column` and `crm run` can do too, and a run started in a terminal shows up on the page.
+
+```bash
+crm ui                          # serves http://127.0.0.1:8787 and prints the URL to open
+crm ui --open                   # also opens it in the default browser
+crm ui --addr 127.0.0.1:9000    # another port
+CRM_DB=/path/to/other.db crm ui
+```
+
+What the page does:
+
+- **Grid:** pick a table; rows × columns, compact. `enrich`/`ai` columns show a status badge per cell (pending, running, ok, empty, error, uncertain, skipped) from the newest run of that cell; hover a cell for the error (already redacted), provider, cost and run id. Formula columns are computed on read.
+- **Filter:** the box at the top takes the same expressions as `--only` (`fit>=70; company!=`), applied on the server; each column also has a quick text filter.
+- **Run column** (column header menu `⋮`): shows the dry-run estimate first — items, cache hits, rows without input, calls, expected and worst-case cost, and `unbounded` when an `ai` column reads a column filled in the same run. Confirm with a budget (prefilled with the worst case; required whenever the run may spend money). Progress refreshes every second while a run is active: per-cell statuses, done/total, spent vs budget, tokens. **Cancel run** stops a run started from the page (it stays resumable with `crm run --resume <id>`).
+- **Add column:** `input`, `formula`, `enrich` (waterfall, from, field) or `ai` (prompt, output, explain), with an **Estimate** button that prices the column before it is saved. The column is then run from its header menu.
+- **Import CSV:** button or drop a file on the page; choose the table name and, on the first import, the key column (rows with a known key are updated). **Export CSV** downloads the table (filtered rows, every column).
+
+Security (the page can spend money and read every lead):
+
+- Every API request needs the session token. `--token` (or `CRM_UI_TOKEN`) sets it; otherwise a random token is generated on a loopback address and printed once on stderr inside the URL fragment (`http://127.0.0.1:8787/#token=…`). The fragment is never sent to the server, the page moves the token to `sessionStorage` (that tab only) and removes it from the address bar; the server never logs it. A non-loopback `--addr` refuses to start without an explicit token, and the server is plain HTTP: put a TLS proxy in front before exposing it.
+- Host and Origin are checked on every request (DNS rebinding and cross-site requests answer `403`); state-changing requests are `POST`s that must be same-site and carry `Content-Type: application/json` (or `text/csv` for imports) plus the `Authorization: Bearer` header, which a cross-site form cannot send. Bodies are capped at 16 MiB; the page has a strict Content-Security-Policy and renders cell values as text.
+- Ctrl-C stops the server; runs started from the page are left `interrupted` and resumable.
+
+JSON API (all under `/api`, bearer token required), for scripts: `GET /tables`, `GET /tables/{t}[?only=expr]` (columns, rows, per-cell state, live/latest run), `GET /tables/{t}/export[?only=expr]` (CSV), `GET /tables/{t}/runs`, `POST /tables/import?as=t[&key=col]` (CSV body), `POST /tables/{t}/columns`, `POST /tables/{t}/estimate` (`{"columns":[…],"only":[…]}`, or `{"preview":{column spec}}` for an unsaved column), `POST /tables/{t}/runs` (`{"columns":[…],"budget":"0.50"}`, answers `202` with the run), `GET /runs/{id}`, `POST /runs/{id}/cancel`.
+
+The grid is [Tabulator](https://tabulator.info) 6.3.1 (MIT), vendored in `internal/ui/static/vendor/` with its license.
+
 ## Output Formats
 
 Every command supports `--format` / `-f`:

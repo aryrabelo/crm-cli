@@ -30,11 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `crm bench run [--tasks bench] [--baseline per-entity] [--transport inprocess|http] [-f table|json]`: runs the 10 task files in `bench/` through an MCP client against fake providers and prints tool calls, provider calls, tokens, cost, wall time, payload size and check per task, plus totals; `--baseline per-entity` compares the call count with the one-entity tools (54× fewer calls on the 4 tasks both can do)
 - `crm cache clear [--provider P] [--older-than D]`: delete cached provider answers; `crm provider set --cache-ttl D` (default `30d`, `0` never expires) and, for `http` providers, `--error-path` / `--ok-path`
 - `crm run` / `crm qualify --retry-uncertain` and MCP `retry_uncertain`: opt in to retrying paid POST calls that timed out after the request was sent; runs report `uncertain_spent` / items `uncertain` (migration `1005_uncertain_cost.sql`)
+- `crm ui [--addr 127.0.0.1:8787] [--token T] [--open]`: spreadsheet page in the same binary (embedded static files, vendored Tabulator 6.3.1 MIT, no build step). Grid of rows × columns with a per-cell status badge (pending/running/ok/empty/error/uncertain/skipped, redacted error in the tooltip) from the newest run item; `--only`-style filter; column menu **Run column** → dry-run estimate (calls, cache hits, cost, unbounded) → confirm with a budget → 1 s polling while a run is active, including runs started by `crm run` in a terminal; **Add column** (input/formula/enrich/ai) with a pre-save estimate; CSV import (picker or drop) and export; run summary with spent vs budget and tokens. Thin JSON API under `/api` over `internal/service`, behind `internal/httpguard` (token from `--token`/`CRM_UI_TOKEN` or generated and printed once in a `#token=` URL fragment, Host/Origin checks, 16 MiB body cap, timeouts) plus a same-site + exact Content-Type check on every state-changing `POST`, and a strict Content-Security-Policy
+- `httpguard.WrapPublic` (Host/Origin checks and body cap without the token, for data-free static files) and `httpguard.Serve` (listen, serve, graceful shutdown), shared by `crm mcp serve --http` and `crm ui`
 
 ### Changed
 
 - CLI data-plane commands (`table import|show|export`, `column add|list`, `run`, `run show`, `qualify`) and the MCP batch tools share one `internal/service` layer
 - `crm mcp serve` without `--http` keeps the stdio transport; it stops when stdin closes or on Ctrl-C
+- The background-run tracker of MCP `wait: false` moved to `run.Tracker`, shared with `crm ui`
 
 ### Fixed
 

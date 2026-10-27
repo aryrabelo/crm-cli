@@ -59,6 +59,7 @@ internal/
     qualify.go                 # crm qualify: yes/no/maybe ai column (+ reason) run through crm run (fork: data plane)
     push.go                    # crm push: table rows → people/orgs with dedupe (fork: data plane)
     bench.go                   # crm bench run [--baseline per-entity] (fork: data plane)
+    ui.go                      # crm ui [--addr] [--token] [--open]: spreadsheet page server, prints the #token= URL (fork: data plane)
     custom_fields.go           # Custom field output for show commands
   db/
     db.go                      # Connection, pragmas, migration runner (version = file-name prefix, tracked in schema_migrations)
@@ -84,13 +85,18 @@ internal/
   importer/
     importer.go                # Column mapping, upsert by key, export cells (fork: data plane)
   httpguard/
-    httpguard.go               # Reusable HTTP guard: mandatory bearer token, Host/Origin allowlists, body cap, server timeouts (fork)
+    httpguard.go               # Reusable HTTP guard: mandatory bearer token (Wrap) or Host/Origin-only for static files (WrapPublic), body cap, server timeouts, Serve (fork)
+  ui/                          # crm ui (fork: data plane)
+    server.go                  # Thin JSON API over internal/service behind httpguard + same-site/Content-Type CSRF check; static page via go:embed
+    static/                    # index.html, app.js, app.css (no framework, no build step)
+      vendor/                  # Tabulator 6.3.1 min JS/CSS + LICENSE.tabulator (MIT), vendored as-is
   mcp/
     server.go                  # Upstream one-entity tools (registerEntityTools)
     serve.go                   # Server type: New, ServeStdio, Handler/ServeHTTP behind internal/httpguard
-    batch.go                   # Batch data-plane tools (arrays in, per-item errors), wait=false run tracker
-  service/                     # Data-plane operations shared by CLI commands and MCP batch tools (fork)
+    batch.go                   # Batch data-plane tools (arrays in, per-item errors), wait=false runs via run.Tracker
+  service/                     # Data-plane operations shared by CLI commands, MCP batch tools and crm ui (fork)
     service.go / table.go / column.go / run.go / qualify.go
+    cells.go                   # Per-cell newest run item + live/latest run of a table (crm ui)
     push.go / dedupe.go        # crm push / crm_push_dedupe: email, domain, fuzzy-name dedupe
   bench/                       # crm bench: task files loader, fake providers, MCP-client runner (fork)
   format/
@@ -120,8 +126,9 @@ internal/
   run/
     store.go                   # runs + run_items (checkpoints, uncertain cost), stats
     budget.go                  # Hard budget (reserve/settle), backoff
-    lease.go                   # Run lease: atomic Claim (owner + heartbeat CAS), Heartbeat, Release, stale takeover
+    lease.go                   # Run lease: atomic Claim (owner + heartbeat CAS), Heartbeat, Release, stale takeover, Live run of a table
     engine.go                  # Worker pool, retry (no retry of a sent paid POST unless RetryUncertain), dry-run estimate, resume
+    tracker.go                 # Background runs of a long-lived server (MCP wait=false, crm ui): Start/State/Cancel/Close
   model/
     types.go                   # Domain types, constants, enums
     errors.go                  # Error types with exit codes
@@ -136,7 +143,8 @@ internal/
 3. **Formatters** (`internal/format/`) — transform data to table/json/csv. No business logic.
 4. **Models** (`internal/model/`) — domain types, constants, error types. No imports from other internal packages.
 5. **MCP server** (`internal/mcp/`) — thin wrappers: one-entity tools call the repositories, batch tools call `internal/service`, the same layer the data-plane CLI commands use. No duplicate logic.
-6. **Data plane** (fork: `internal/table`, `internal/column`, `internal/run`, `internal/provider`, `internal/waterfall`, `internal/value`, `internal/service`, `internal/bench`) — self-contained packages that own their SQL (parameterized, `repo.DBTX`) so the upstream tree stays untouched except for wiring. Dependency order: `value` ← `provider` ← `waterfall` ← `column` ← `table` ← `run` ← `service` ← `mcp` ← `bench` ← `cli`. Money is integer micro-USD (`provider.Cost`).
+6. **Data plane** (fork: `internal/table`, `internal/column`, `internal/run`, `internal/provider`, `internal/waterfall`, `internal/value`, `internal/service`, `internal/bench`, `internal/ui`) — self-contained packages that own their SQL (parameterized, `repo.DBTX`) so the upstream tree stays untouched except for wiring. Dependency order: `value` ← `provider` ← `waterfall` ← `column` ← `table` ← `run` ← `service` ← `mcp`/`ui` ← `bench` ← `cli`. Money is integer micro-USD (`provider.Cost`).
+   - **`crm ui` handlers are thin, like the MCP batch tools** — each endpoint in `internal/ui/server.go` decodes JSON, calls one `internal/service` method and encodes the result; never compute in the handler or in `app.js` what the service already knows (costs, statuses, filters). Every `/api` route goes through `httpguard.Wrap` (token); state-changing routes are `POST` behind `sameSite` (Sec-Fetch-Site + exact Content-Type). Cell values render as text (`textContent`), never as HTML; Tabulator options that take strings (labels, tooltips) are given DOM elements.
    - **ai columns run through the same engine as enrich columns** — one `crm run` path (budget reservation, cache by (provider, input hash), retry, resume, dry-run); never add a parallel execution path. An adapter's `Estimate` must be an upper bound of what `Enrich` charges (the llm adapter bounds tokens by prompt bytes + max tokens, repair call included), or the budget can be exceeded. LLM token counts travel in the context (`provider.WithUsage`) and land in `run_items.tokens_in/out`.
 
 ### Key Patterns

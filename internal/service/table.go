@@ -55,6 +55,11 @@ func (s *Service) UpsertRows(ctx context.Context, opts table.ImportOptions, colu
 	return res, err
 }
 
+// Tables lists every table with its row and column counts.
+func (s *Service) Tables(ctx context.Context) ([]*table.Summary, error) {
+	return table.NewStore(s.db).ListWorkspaces(ctx)
+}
+
 // View returns the rows of table name that match every only filter, with
 // formula columns evaluated.
 func (s *Service) View(ctx context.Context, name string, only []string) (*table.Workspace, *table.View, error) {

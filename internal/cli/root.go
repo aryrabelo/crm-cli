@@ -59,6 +59,7 @@ func NewRootCmd() *cobra.Command {
 	registerQualifyCommand(rootCmd)
 	registerPushCommand(rootCmd)
 	registerBenchCommands(rootCmd)
+	registerUICommand(rootCmd)
 
 	return rootCmd
 }

@@ -89,6 +89,14 @@ func (s *Store) Release(ctx context.Context, runID int64, owner string) error {
 	return nil
 }
 
+// Live returns the newest run of workspace workspaceID that an executor
+// holds now, in this process or another (crm run in a terminal): running,
+// with a heartbeat newer than stale. nil when there is none.
+func (s *Store) Live(ctx context.Context, workspaceID int64, now time.Time, stale time.Duration) (*Run, error) {
+	return s.newest(ctx, "r.workspace_id = ? AND r.status = ? AND r.heartbeat_at >= ?",
+		workspaceID, StatusRunning, unixMS(now.Add(-stale)))
+}
+
 func oneRow(res sql.Result, runID int64) error {
 	n, err := res.RowsAffected()
 	if err != nil {
