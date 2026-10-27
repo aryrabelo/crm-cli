@@ -213,8 +213,7 @@ func benchCompareRows(batch, perEntity []*bench.Result) []map[string]any {
 	return append(data, map[string]any{
 		"task": fmt.Sprintf("TOTAL (calls/wall/KB: %d tasks in both modes)", both), "batch_calls": bCalls, "per_entity_calls": pCalls,
 		"gap": fmt.Sprintf("%.1fx", bench.Ratio(pCalls, bCalls)), "batch_cost": bCost.String(), "batch_cost_usd": bCost.USD(),
-		"batch_tokens": bTokens,
-		"batch_wall": wallText(bWall), "per_entity_wall": wallText(pWall), "batch_kb": kb(bBytes), "per_entity_kb": kb(pBytes),
-		"batch_check": "", "per_entity_check": "", "per_entity_na": "",
+		"batch_tokens": bTokens, "batch_wall": wallText(bWall), "per_entity_wall": wallText(pWall), "batch_kb": kb(bBytes),
+		"per_entity_kb": kb(pBytes), "batch_check": "", "per_entity_check": "", "per_entity_na": "",
 	})
 }

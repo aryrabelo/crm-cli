@@ -25,9 +25,9 @@ var Version = "dev"
 // NewRootCmd creates the root cobra command.
 func NewRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "crm",
-		Short: "Local-first personal CRM for the terminal",
-		Long:  "A local-first personal CRM for the terminal. Store contacts, organizations, interactions, deals, and tasks in a local SQLite database.",
+		Use:           "crm",
+		Short:         "Local-first personal CRM for the terminal",
+		Long:          "A local-first personal CRM for the terminal. Store contacts, organizations, interactions, deals, and tasks in a local SQLite database.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       Version,
