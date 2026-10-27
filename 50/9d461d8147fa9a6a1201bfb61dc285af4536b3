@@ -1,0 +1,22 @@
+internal/httpguard/httpguard.go
+  h_b156936c57c455 2-3,11-12,19,117-138,152,161,187-222
+internal/httpguard/httpguard_test.go
+  h_b156936c57c455 106-118
+internal/mcp/batch.go
+  h_b156936c57c455 327,360-364
+internal/mcp/serve.go
+  h_b156936c57c455 12,25,54,73,97
+internal/run/tracker.go
+  h_b156936c57c455 1-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "509d461d8147fa9a6a1201bfb61dc285af4536b3",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
