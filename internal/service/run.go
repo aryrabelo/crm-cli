@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jdanielnd/crm-cli/internal/provider"
 	"github.com/jdanielnd/crm-cli/internal/run"
 )
 
@@ -50,7 +51,9 @@ func ItemData(it *run.Item) map[string]any {
 		m["value"] = *it.Value
 	}
 	if it.Error != nil {
-		m["error"] = *it.Error
+		// Redacted again on output: rows written by earlier builds stored
+		// provider errors verbatim.
+		m["error"] = provider.RedactError(*it.Error)
 	}
 	return m
 }

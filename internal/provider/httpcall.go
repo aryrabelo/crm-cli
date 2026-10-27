@@ -15,13 +15,15 @@ const maxResponseBytes = 16 << 20
 // call performs req and classifies the outcome. A 404 is not an error: it
 // returns found=false so adapters can answer "no data" (and still charge).
 // 408, 429 and 5xx are retryable, as are transport failures and timeouts.
+// Error text never carries req's credentials: transport errors embed the
+// request URL and error bodies may echo it (redactRequest).
 func call(ctx context.Context, client *http.Client, req *http.Request) (body []byte, found bool, err error) {
 	resp, err := client.Do(req.WithContext(ctx))
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, false, ctx.Err()
 		}
-		return nil, false, &Error{Retryable: true, Msg: err.Error()}
+		return nil, false, &Error{Retryable: true, Msg: redactRequest(err.Error(), req)}
 	}
 	defer resp.Body.Close()
 
@@ -30,7 +32,7 @@ func call(ctx context.Context, client *http.Client, req *http.Request) (body []b
 		if ctx.Err() != nil {
 			return nil, false, ctx.Err()
 		}
-		return nil, false, &Error{Retryable: true, Msg: "read response: " + err.Error()}
+		return nil, false, &Error{Retryable: true, Msg: redactRequest("read response: "+err.Error(), req)}
 	}
 
 	switch {
@@ -40,7 +42,7 @@ func call(ctx context.Context, client *http.Client, req *http.Request) (body []b
 		return nil, false, nil
 	}
 
-	e := &Error{Status: resp.StatusCode, Msg: snippet(body)}
+	e := &Error{Status: resp.StatusCode, Msg: redactRequest(snippet(body), req)}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests,
 		resp.StatusCode == http.StatusRequestTimeout,

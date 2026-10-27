@@ -346,7 +346,7 @@ Ctrl-C shuts the server down gracefully; runs started with `wait: false` are lef
 | `crm_export` | Filtered rows as `csv`, `tsv` or `json` text | `crm table export` |
 | `crm_push_dedupe` | Table rows → people/orgs, dedupe by email, domain or fuzzy name; `dry_run` | `crm push` |
 
-Budgets are a number or a string of dollars (`0.5`, `"0.50"`). Call-level errors (unknown table, invalid filter, missing budget) come back as tool errors with the message; database and network details stay out of results. Message sequences (`crm_sequence_render`) belong to slice S4 and are not part of this server yet.
+Budgets are a number or a string of dollars (`0.5`, `"0.50"`). Call-level errors (unknown table, invalid filter, missing budget) come back as tool errors with the message; database and network details stay out of results. Item-level errors (`crm_run_status` with `items`, `crm run show --items`, `run_items.error`) are redacted before they are stored and again when they are returned: URLs lose their query string, credentials and fragment, the request's key/token values and credential-looking values (`Bearer …`, `api_key=…`, `"token": …`) are masked, and each error is capped at 300 bytes. Message sequences (`crm_sequence_render`) belong to slice S4 and are not part of this server yet.
 
 **One-entity tools** (upstream, unchanged):
 

@@ -619,7 +619,7 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 				it.Status = ItemPending
 			case err != nil:
 				it.Status = ItemFailed
-				it.Error = ptr(err.Error())
+				it.Error = ptr(provider.RedactError(err.Error()))
 			case res.Answered():
 				enc, err := json.Marshal(res.Value)
 				if err != nil {
@@ -631,7 +631,7 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 				cells = t.col.Cells(res.Value)
 			case len(res.Errors) > 0:
 				it.Status = ItemFailed
-				it.Error = ptr(strings.Join(res.Errors, "; "))
+				it.Error = ptr(provider.RedactError(strings.Join(res.Errors, "; ")))
 			default:
 				it.Status = ItemEmpty
 				cells = t.col.Cells(nil)
