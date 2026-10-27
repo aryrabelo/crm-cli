@@ -1,0 +1,20 @@
+CHANGELOG.md
+  h_b156936c57c455 42
+internal/run/engine.go
+  h_b156936c57c455 256,267-286,319,594-598
+internal/run/resume_test.go
+  h_b156936c57c455 1-47
+internal/run/store.go
+  h_b156936c57c455 182-183,192,216-240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73e917618813d9e624f09a20fa812ea8d0e4f0bf",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
