@@ -126,12 +126,14 @@ The budget caps the spend crm accounts for, at the configured provider prices:
 a call is only made after its estimated price is reserved, so the recorded
 spend never exceeds --budget; items that do not fit are marked skipped. ai
 columns reserve their worst case (prompt bound plus max tokens, twice for the
-one JSON repair retry) and are charged the tokens the provider reports. Failed
-calls with an error response cost nothing, but a call that times out or loses
-its connection after the request was sent may have been billed: it is counted
-at its estimate and reported as uncertain, and a paid POST in that state is not
-retried (--retry-uncertain retries it). What a provider actually bills follows
-its own prices, which crm does not see.
+one JSON repair retry) and are charged the tokens the provider reports, also
+when the reply fails to decode or stays invalid after the repair. An error
+status (other than an enrich 404) costs nothing; a 404 or empty enrich answer
+costs the call's price. A call that times out or loses its connection after
+the request was sent may have been billed: it is counted at its estimate and
+reported as uncertain, and a paid POST in that state is not retried
+(--retry-uncertain retries it). What a provider actually bills follows its
+own prices, which crm does not see.
 
 --budget is required when the run may spend money (see --dry-run). Every item
 is checkpointed: --resume <run-id> continues a run, re-trying pending, failed
