@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	"github.com/jdanielnd/crm-cli/internal/provider"
 	"github.com/jdanielnd/crm-cli/internal/service"
 	"github.com/mark3labs/mcp-go/server"
@@ -79,39 +79,36 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 	return server.NewStdioServer(s.mcp).Listen(ctx, in, out)
 }
 
-// Handler serves the streamable HTTP transport at HTTPPath. A non-empty
-// token requires "Authorization: Bearer <token>" on every request.
-func (s *Server) Handler(token string) http.Handler {
-	var h http.Handler = server.NewStreamableHTTPServer(s.mcp, server.WithEndpointPath(HTTPPath))
-	if token != "" {
-		h = bearerAuth(token, h)
+// Handler serves the streamable HTTP transport at HTTPPath behind
+// httpguard: Host/Origin allowlists, a mandatory bearer token and a body cap.
+func (s *Server) Handler(guard httpguard.Config) (http.Handler, error) {
+	h, err := httpguard.Wrap(guard, server.NewStreamableHTTPServer(s.mcp, server.WithEndpointPath(HTTPPath)))
+	if err != nil {
+		return nil, err
 	}
 	mux := http.NewServeMux()
 	mux.Handle(HTTPPath, h)
-	return mux
+	return mux, nil
 }
 
-func bearerAuth(token string, next http.Handler) http.Handler {
-	want := []byte("Bearer " + token)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="crm"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// ServeHTTP listens on addr and serves Handler(token) until ctx is
-// cancelled, then shuts down gracefully. ready (optional) receives the bound
-// address once listening.
+// ServeHTTP listens on addr and serves Handler until ctx is cancelled, then
+// shuts down gracefully. token is required. On a loopback address only
+// loopback Host and Origin values are accepted (DNS rebinding). ready
+// (optional) receives the bound address once listening.
 func (s *Server) ServeHTTP(ctx context.Context, addr, token string, ready func(net.Addr)) error {
+	if token == "" {
+		return errors.New("mcp: the HTTP transport requires a bearer token")
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
-	srv := &http.Server{Handler: s.Handler(token), ReadHeaderTimeout: 10 * time.Second}
+	h, err := s.Handler(httpguard.ForListener(token, ln))
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	srv := httpguard.NewServer(h)
 	if ready != nil {
 		ready(ln.Addr())
 	}
@@ -128,18 +125,4 @@ func (s *Server) ServeHTTP(ctx context.Context, addr, token string, ready func(n
 		}
 		return err
 	}
-}
-
-// RequiresToken reports whether binding addr exposes the server beyond this
-// machine (any host other than a loopback address or "localhost").
-func RequiresToken(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return true
-	}
-	if host == "localhost" {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip == nil || !ip.IsLoopback()
 }

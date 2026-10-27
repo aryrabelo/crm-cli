@@ -13,6 +13,7 @@ import (
 
 	"github.com/jdanielnd/crm-cli/internal/bench"
 	"github.com/jdanielnd/crm-cli/internal/db"
+	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	crmmcp "github.com/jdanielnd/crm-cli/internal/mcp"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -54,8 +55,7 @@ func connect(t *testing.T, s *crmmcp.Server, kind string) *client.Client {
 		t.Cleanup(func() { _ = cliOut.Close(); _ = srvOut.Close() })
 		c = client.NewClient(transport.NewIO(cliIn, cliOut, io.NopCloser(strings.NewReader(""))))
 	case "http":
-		hs := httptest.NewServer(s.Handler(testToken))
-		t.Cleanup(hs.Close)
+		hs := guardedServer(t, s)
 		c, err = client.NewStreamableHttpClient(hs.URL+crmmcp.HTTPPath,
 			transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer " + testToken}))
 	default:
@@ -312,25 +312,53 @@ func TestQualifyAndPushDedupe(t *testing.T) {
 	}
 }
 
+// guardedServer serves s over HTTP on a loopback port with the guard of a
+// loopback bind (Host/Origin allowlists, testToken).
+func guardedServer(t *testing.T, s *crmmcp.Server) *httptest.Server {
+	t.Helper()
+	hs := httptest.NewUnstartedServer(nil)
+	h, err := s.Handler(httpguard.Loopback(testToken, hs.Listener.Addr()))
+	require.NoError(t, err)
+	hs.Config.Handler = h
+	hs.Start()
+	t.Cleanup(hs.Close)
+	return hs
+}
+
+const initializeBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`
+
+// post sends an initialize request to hs with the given headers ("Host"
+// overrides the request host) and returns the status code.
+func post(t *testing.T, hs *httptest.Server, headers map[string]string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, hs.URL+crmmcp.HTTPPath, strings.NewReader(initializeBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	for k, v := range headers {
+		if k == "Host" {
+			req.Host = v
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
 func TestHTTPBearerAuth(t *testing.T) {
 	s := newBatchServer(t)
-	hs := httptest.NewServer(s.Handler(testToken))
-	t.Cleanup(hs.Close)
-	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`
+	hs := guardedServer(t, s)
 	for name, auth := range map[string]string{"missing": "", "wrong": "Bearer nope", "not bearer": testToken} {
 		t.Run(name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodPost, hs.URL+crmmcp.HTTPPath, strings.NewReader(body))
-			require.NoError(t, err)
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Accept", "application/json, text/event-stream")
+			h := map[string]string{}
 			if auth != "" {
-				req.Header.Set("Authorization", auth)
+				h["Authorization"] = auth
 			}
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			resp.Body.Close()
-			assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-			assert.Contains(t, resp.Header.Get("WWW-Authenticate"), "Bearer")
+			assert.Equal(t, http.StatusUnauthorized, post(t, hs, h))
 		})
 	}
 
@@ -344,24 +372,55 @@ func TestHTTPBearerAuth(t *testing.T) {
 	_, err = c.Initialize(context.Background(), init)
 	require.Error(t, err)
 
-	// Without a token configured the handler is open.
-	open := httptest.NewServer(s.Handler(""))
-	t.Cleanup(open.Close)
-	oc, err := client.NewStreamableHttpClient(open.URL + crmmcp.HTTPPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = oc.Close() })
-	require.NoError(t, oc.Start(context.Background()))
-	_, err = oc.Initialize(context.Background(), init)
-	require.NoError(t, err)
+	// There is no open mode: a handler without a token cannot be built.
+	_, err = s.Handler(httpguard.Config{})
+	require.Error(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.Error(t, s.ServeHTTP(ctx, "127.0.0.1:0", "", nil))
 }
 
-func TestRequiresToken(t *testing.T) {
-	for addr, want := range map[string]bool{
-		"127.0.0.1:8765": false, "localhost:8765": false, "[::1]:8765": false,
-		":8765": true, "0.0.0.0:8765": true, "192.168.0.10:8765": true, "example.com:80": true, "garbage": true,
-	} {
-		assert.Equal(t, want, crmmcp.RequiresToken(addr), addr)
+// Design review P0-1: a web page that rebinds its name to 127.0.0.1 (or
+// posts cross-origin) must not reach the tools, even with a valid token.
+func TestHTTPGuard_DNSRebindingAndOrigin(t *testing.T) {
+	s := newBatchServer(t)
+	hs := guardedServer(t, s)
+	_, port, err := net.SplitHostPort(hs.Listener.Addr().String())
+	require.NoError(t, err)
+	bearer := "Bearer " + testToken
+	cases := []struct {
+		name    string
+		headers map[string]string
+		want    int
+	}{
+		{"rebound host", map[string]string{"Host": "evil.example:" + port, "Authorization": bearer}, http.StatusForbidden},
+		{"rebound host, same-origin Origin", map[string]string{"Host": "evil.example:" + port, "Origin": "http://evil.example:" + port, "Authorization": bearer}, http.StatusForbidden},
+		{"foreign origin", map[string]string{"Origin": "http://evil.example", "Authorization": bearer}, http.StatusForbidden},
+		{"foreign origin, no token", map[string]string{"Origin": "http://evil.example"}, http.StatusForbidden},
+		{"loopback origin", map[string]string{"Origin": "http://localhost:" + port, "Authorization": bearer}, http.StatusOK},
+		{"localhost host", map[string]string{"Host": "localhost:" + port, "Authorization": bearer}, http.StatusOK},
+		{"null origin", map[string]string{"Origin": "null", "Authorization": bearer}, http.StatusOK},
+		{"no origin", map[string]string{"Authorization": bearer}, http.StatusOK},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, post(t, hs, tc.headers))
+		})
+	}
+}
+
+func TestHTTPGuard_BodyLimit(t *testing.T) {
+	s := newBatchServer(t)
+	hs := guardedServer(t, s)
+	big := strings.Repeat(" ", httpguard.DefaultMaxBodyBytes+1)
+	req, err := http.NewRequest(http.MethodPost, hs.URL+crmmcp.HTTPPath, strings.NewReader(big))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
 }
 
 func TestServeHTTP_ShutsDownOnCancel(t *testing.T) {

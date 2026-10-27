@@ -16,6 +16,7 @@ import (
 
 	"github.com/jdanielnd/crm-cli/internal/csvio"
 	"github.com/jdanielnd/crm-cli/internal/db"
+	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	"github.com/jdanielnd/crm-cli/internal/importer"
 	crmmcp "github.com/jdanielnd/crm-cli/internal/mcp"
 	"github.com/jdanielnd/crm-cli/internal/provider"
@@ -136,7 +137,14 @@ func (r *Runner) connect(ctx context.Context, srv *crmmcp.Server) (*client.Clien
 	var err error
 	switch r.Transport {
 	case HTTP:
-		hs := httptest.NewServer(srv.Handler(httpToken))
+		hs := httptest.NewUnstartedServer(nil)
+		h, herr := srv.Handler(httpguard.Loopback(httpToken, hs.Listener.Addr()))
+		if herr != nil {
+			hs.Close()
+			return nil, nil, herr
+		}
+		hs.Config.Handler = h
+		hs.Start()
 		stop = hs.Close
 		c, err = client.NewStreamableHttpClient(hs.URL+crmmcp.HTTPPath,
 			transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer " + httpToken}))

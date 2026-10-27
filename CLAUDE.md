@@ -80,9 +80,11 @@ internal/
     csvio.go                   # Byte-preserving CSV parse/write (fork: data plane)
   importer/
     importer.go                # Column mapping, upsert by key, export cells (fork: data plane)
+  httpguard/
+    httpguard.go               # Reusable HTTP guard: mandatory bearer token, Host/Origin allowlists, body cap, server timeouts (fork)
   mcp/
     server.go                  # Upstream one-entity tools (registerEntityTools)
-    serve.go                   # Server type: New, ServeStdio, Handler/ServeHTTP (bearer auth), RequiresToken
+    serve.go                   # Server type: New, ServeStdio, Handler/ServeHTTP behind internal/httpguard
     batch.go                   # Batch data-plane tools (arrays in, per-item errors), wait=false run tracker
   service/                     # Data-plane operations shared by CLI commands and MCP batch tools (fork)
     service.go / table.go / column.go / run.go / qualify.go
@@ -359,7 +361,7 @@ func TestPersonRepo_Create(t *testing.T) {
 
 ## MCP Server
 
-- Uses `mcp-go`: stdio by default, streamable HTTP at `/mcp` with `crm mcp serve --http`; bearer `--token`/`CRM_MCP_TOKEN` is required for non-loopback addresses
+- Uses `mcp-go`: stdio by default, streamable HTTP at `/mcp` with `crm mcp serve --http`. HTTP always goes through `internal/httpguard` (reuse it for any new HTTP server): mandatory bearer token (`--token`/`CRM_MCP_TOKEN`, else generated and printed on stderr for loopback binds; non-loopback binds need an explicit token), loopback Host allowlist, foreign-Origin rejection, body cap, read/idle timeouts
 - **Never write to stdout** in MCP mode — stdout is the JSON-RPC transport. All logging goes to `stderr`.
 - One-entity tools are thin wrappers calling repository methods; batch tools are thin wrappers calling `internal/service` and report errors per item (`errText`) instead of failing the call
 - Return errors as MCP content with `isError: true` — don't return Go errors from tool handlers

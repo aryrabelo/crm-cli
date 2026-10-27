@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	crmmcp "github.com/jdanielnd/crm-cli/internal/mcp"
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/spf13/cobra"
@@ -31,12 +32,24 @@ func mcpServeCmd() *cobra.Command {
 
 Without --http it speaks JSON-RPC on stdin/stdout (what desktop clients
 spawn). With --http ADDR it serves the streamable HTTP transport at
-http://ADDR` + crmmcp.HTTPPath + `; --token (or ` + mcpTokenEnv + `) then requires
-"Authorization: Bearer <token>". A token is mandatory when ADDR is not a
-loopback address.`,
+http://ADDR` + crmmcp.HTTPPath + `, and every request needs
+"Authorization: Bearer <token>":
+
+  - --token (or ` + mcpTokenEnv + `) sets the token. Without one, a loopback
+    address gets a random token generated at startup and printed on stderr
+    (copy it into your MCP client); any other address refuses to start.
+  - On a loopback address only Host and Origin values naming 127.0.0.1,
+    localhost or [::1] with the bound port are accepted, so a web page cannot
+    reach the server through DNS rebinding. Requests carrying a foreign
+    Origin get 403 on every address.
+  - Request bodies are capped at 16 MiB. The transport is plain HTTP: put a
+    TLS reverse proxy in front before listening beyond this machine.`,
 		Example: `  crm mcp serve
-  crm mcp serve --http 127.0.0.1:8765
-  CRM_MCP_TOKEN=s3cret crm mcp serve --http :8765`,
+  crm mcp serve --http 127.0.0.1:8765          # prints a generated token on stderr
+  CRM_MCP_TOKEN=s3cret crm mcp serve --http 127.0.0.1:8765
+  curl -H "Authorization: Bearer $CRM_MCP_TOKEN" -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' http://127.0.0.1:8765/mcp \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if addr == "" && cmd.Flags().Changed("token") {
@@ -45,13 +58,21 @@ loopback address.`,
 			if token == "" {
 				token = os.Getenv(mcpTokenEnv)
 			}
+			generated := false
 			if addr != "" {
 				if _, _, err := net.SplitHostPort(addr); err != nil {
 					return model.NewExitError(model.ErrValidation, "--http %q: want HOST:PORT or :PORT", addr)
 				}
-				if token == "" && crmmcp.RequiresToken(addr) {
+				if token == "" && !httpguard.IsLoopback(addr) {
 					return model.NewExitError(model.ErrValidation,
 						"--http %s listens beyond this machine: set --token or %s (or bind 127.0.0.1)", addr, mcpTokenEnv)
+				}
+				if token == "" {
+					t, err := httpguard.NewToken()
+					if err != nil {
+						return err
+					}
+					token, generated = t, true
 				}
 			}
 			db, err := openDB()
@@ -65,15 +86,14 @@ loopback address.`,
 				return s.ServeStdio(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout())
 			}
 			return s.ServeHTTP(cmd.Context(), addr, token, func(a net.Addr) {
-				auth := "no auth"
-				if token != "" {
-					auth = "bearer token required"
+				fmt.Fprintf(os.Stderr, "crm mcp: serving streamable HTTP on http://%s%s (bearer token required)\n", a, crmmcp.HTTPPath)
+				if generated {
+					fmt.Fprintf(os.Stderr, "crm mcp: no --token or %s given; generated token for this session:\n    Authorization: Bearer %s\n", mcpTokenEnv, token)
 				}
-				fmt.Fprintf(os.Stderr, "crm mcp: serving streamable HTTP on http://%s%s (%s)\n", a, crmmcp.HTTPPath, auth)
 			})
 		},
 	}
 	cmd.Flags().StringVar(&addr, "http", "", "serve streamable HTTP on HOST:PORT instead of stdio")
-	cmd.Flags().StringVar(&token, "token", "", "bearer token required on HTTP requests (default $"+mcpTokenEnv+")")
+	cmd.Flags().StringVar(&token, "token", "", "bearer token required on HTTP requests (default $"+mcpTokenEnv+", else generated on loopback)")
 	return cmd
 }

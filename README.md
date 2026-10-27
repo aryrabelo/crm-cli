@@ -315,12 +315,19 @@ Then copy [`AGENT.md`](AGENT.md) into your project as `CLAUDE.md` so Claude know
 ### Streamable HTTP
 
 ```bash
-crm mcp serve --http 127.0.0.1:8765                         # http://127.0.0.1:8765/mcp, no auth on loopback
-CRM_MCP_TOKEN=s3cret crm mcp serve --http :8765             # every request needs "Authorization: Bearer s3cret"
-claude mcp add --transport http crm http://127.0.0.1:8765/mcp
+crm mcp serve --http 127.0.0.1:8765                         # http://127.0.0.1:8765/mcp; prints a generated token on stderr
+CRM_MCP_TOKEN=s3cret crm mcp serve --http 127.0.0.1:8765    # every request needs "Authorization: Bearer s3cret"
+claude mcp add --transport http crm http://127.0.0.1:8765/mcp --header "Authorization: Bearer s3cret"
 ```
 
-`--token` (or `CRM_MCP_TOKEN`) is **required** when the address is not loopback (`127.0.0.1`, `::1`, `localhost`); a request without the right bearer token gets `401`. Ctrl-C shuts the server down gracefully; runs started with `wait: false` are left `interrupted` and resumable.
+The HTTP transport always requires a bearer token:
+
+- `--token` (or `CRM_MCP_TOKEN`) sets it. Without one, a loopback address (`127.0.0.1`, `::1`, `localhost`) gets a random token generated at startup and printed on stderr, the way Jupyter does; any other address refuses to start. A request without the right token gets `401`.
+- On a loopback address, only a `Host` of `127.0.0.1`, `localhost` or `[::1]` with the bound port is accepted, so a web page that rebinds its own name to 127.0.0.1 (DNS rebinding) gets `403`. On every address a request with a foreign `Origin` header gets `403` (no `Origin`, `Origin: null` and same-origin requests pass).
+- Bodies are capped at 16 MiB (`413`); slow clients are cut off by read (60 s) and idle (120 s) timeouts.
+- The transport is plain HTTP: put a TLS reverse proxy in front before listening beyond this machine.
+
+Ctrl-C shuts the server down gracefully; runs started with `wait: false` are left `interrupted` and resumable.
 
 ### Available Tools
 
