@@ -1,0 +1,28 @@
+CHANGELOG.md
+  h_b156936c57c455 41
+CLAUDE.md
+  h_b156936c57c455 69,121
+README.md
+  h_b156936c57c455 205
+internal/db/migrations/1004_run_lease.sql
+  h_b156936c57c455 1-13
+internal/run/engine.go
+  h_b156936c57c455 59-61,312-335,347-348,354-375,382,397-398,400-403,410,418,421,523-525,619-626
+internal/run/lease.go
+  h_b156936c57c455 1-101
+internal/run/lease_test.go
+  h_b156936c57c455 1-134
+internal/run/store.go
+  h_b156936c57c455 281-284,289-293,296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "58e09e3b03fc407ab51712182acba10e7c8b6d63",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
