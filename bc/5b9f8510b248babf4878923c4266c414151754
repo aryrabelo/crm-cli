@@ -1,0 +1,16 @@
+internal/cli/bench.go
+  h_b156936c57c455 216-217
+internal/cli/root.go
+  h_b156936c57c455 28-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc5b9f8510b248babf4878923c4266c414151754",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
