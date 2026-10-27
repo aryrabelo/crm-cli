@@ -1,0 +1,28 @@
+README.md
+  h_b156936c57c455 234,363
+internal/cli/qualify.go
+  h_b156936c57c455 39,41,51-55,63,73-75,77,116,138-139
+internal/cli/qualify_test.go
+  h_b156936c57c455 192-275
+internal/column/ai.go
+  h_b156936c57c455 174-176,210
+internal/column/column.go
+  h_b156936c57c455 12,62-64,113,154-159,161,168,172-185
+internal/mcp/batch.go
+  h_b156936c57c455 391-392,407-408,416
+internal/mcp/batch_test.go
+  h_b156936c57c455 268-275
+internal/service/qualify.go
+  h_b156936c57c455 23-26,28-29,34,41-88,100-106,126-130,138-139,144-149,166,171,173-174,176-182,184,235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de30a71bf0e247abf911b70c9ff05c95ed204f64",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
