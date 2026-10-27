@@ -55,6 +55,7 @@ var tableImportColumns = []format.ColumnDef{
 	{Header: "Rows", Field: "rows"},
 	{Header: "Created", Field: "created"},
 	{Header: "Updated", Field: "updated"},
+	{Header: "Failed", Field: "failed"},
 	{Header: "New Columns", Field: "new_columns"},
 }
 
@@ -68,7 +69,12 @@ func tableImportCmd() *cobra.Command {
 Every header becomes an input column; rows are appended in file order. With
 --key, a row whose key already exists updates that row instead of adding a
 duplicate (values computed by runs are kept). The key is fixed by the first
-import of a table.`,
+import of a table.
+
+A header error (empty or repeated header, the key column missing from the
+header) fails the import and writes nothing (exit 2). A row error (empty or
+repeated key) is printed on stderr and that row is skipped; the other rows are
+written and the command exits 6. MCP crm_table_import behaves the same way.`,
 		Example: `  crm table import leads.csv --as leads --key email
   cat more.csv | crm table import - --as leads`,
 		Args: cobra.ExactArgs(1),
@@ -97,15 +103,28 @@ import of a table.`,
 			if err != nil {
 				return err
 			}
+			for _, r := range res.Results {
+				if r.Err != nil {
+					fmt.Fprintf(os.Stderr, "skipped: %s\n", r.Err)
+				}
+			}
 			out := map[string]any{
 				"id":          res.Workspace.ID,
 				"table":       res.Workspace.Name,
 				"rows":        res.Rows,
 				"created":     res.Created,
 				"updated":     res.Updated,
+				"failed":      res.Failed,
 				"new_columns": len(res.NewColumns),
 			}
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{out}, tableImportColumns, flagQuiet)
+			if err := format.Output(os.Stdout, resolveFormat(), []map[string]any{out}, tableImportColumns, flagQuiet); err != nil {
+				return err
+			}
+			if res.Failed > 0 {
+				return model.NewExitError(model.ErrItemsFailed, "imported %d of %d rows into %s; %d row(s) skipped",
+					res.Created+res.Updated, res.Rows, res.Workspace.Name, res.Failed)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&as, "as", "", "table name (required)")

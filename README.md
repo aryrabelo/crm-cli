@@ -197,6 +197,7 @@ crm provider set mine --kind http --url "https://api.example.com/v1/find?q={{inp
 crm cache clear --provider mine --older-than 7d           # forget cached answers (all of them without flags)
 ```
 
+- **Import errors:** `crm table import` and MCP `crm_table_import` (`csv`) follow one rule. A header error — an empty or repeated header, the table's key column missing from the header, a `--key` that differs from the table's — fails the import and writes nothing (exit `2`; a tool error over MCP). A row error — an empty key cell or a key repeated in the file — skips that row and writes the others: the CLI prints each skipped row on stderr and exits `6`, MCP reports it in that row's `results[].error` (`failed` counts them).
 - **Column types:** `input` (imported cells), `formula` (template evaluated on read; `{{col}}`, `{{col.json.path}}`), `enrich` (filled by `crm run`; `--from` is the input column, default the table key; `--field` keeps one value of the answer), `ai` (filled by `crm run` with an LLM answer per row — see below). `crm run --only expr` restricts a run to matching rows.
 - **Waterfall:** providers are tried in order; the first non-empty answer wins, errors and empty answers fall through, and the run item records which provider answered.
 - **Cache:** every answer is cached by (provider, input hash), and the cache is consulted for the whole waterfall before anything is spent — re-running costs `$0`. Entries expire after the provider's `--cache-ttl` (default `30d`; `0` never expires): an expired entry is fetched, and paid, again. `crm cache clear [--provider P] [--older-than D]` deletes entries. An `http` API that reports errors with HTTP 200 needs `--error-path` (the response is an error when that path is set, e.g. `error`) or `--ok-path` (an error unless that path is set, e.g. `success`); such a response is charged, never cached, and fails the item. Without either, the body is taken as the answer (a missing `--path` is cached as "no data").
@@ -288,7 +289,7 @@ Exit codes:
 | `3` | not found |
 | `4` | conflict (including a run held by another `crm run`) |
 | `5` | `crm run` / `crm qualify` stopped at its budget (`budget_exhausted`, items `skipped`) |
-| `6` | `crm run` / `crm qualify` completed with `failed` items |
+| `6` | `crm run` / `crm qualify` completed with `failed` items; `crm table import` skipped rows with errors (the others were written) |
 | `7` | `crm run` / `crm qualify` ended `interrupted` with items `pending`, without a signal |
 | `10` | database error |
 | `128+n` | stopped by signal `n`: `130` for Ctrl-C (SIGINT), `143` for SIGTERM |
@@ -349,11 +350,11 @@ Ctrl-C shuts the server down gracefully; runs started with `wait: false` are lef
 
 ### Available Tools
 
-**Batch tools** (data plane). They accept arrays where an agent would otherwise loop, and report errors per item instead of failing the call — one call does what the one-entity tools need N calls for. They call the same service as the CLI commands, so both behave identically.
+**Batch tools** (data plane). They accept arrays where an agent would otherwise loop, and report errors per item instead of failing the call — one call does what the one-entity tools need N calls for. They call the same `internal/service` operations as their CLI twins; a CLI command reports per-item errors on stderr with a non-zero exit code where the tool returns them in its result (for example, a CSV import with skipped rows exits `6`).
 
 | Tool | Description | CLI twin |
 |------|-------------|----------|
-| `crm_table_import` | Create/append a table from `csv` text or a `rows` array of objects; upsert by `key` | `crm table import` |
+| `crm_table_import` | Create/append a table from `csv` text or a `rows` array of objects; upsert by `key`. A header error fails the call; a row error skips only that row | `crm table import` |
 | `crm_rows_upsert_many` | Upsert many rows into an existing table (each row sets only the cells it names) | — |
 | `crm_table_query` | `filters` (AND), `columns`, `limit` (default 100) / `offset`; returns `total` and `_row` per row | `crm table show` |
 | `crm_column_add` | Declare one or more columns (`input`, `formula`, `enrich`, `ai`) | `crm column add` |

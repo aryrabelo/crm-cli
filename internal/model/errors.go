@@ -12,9 +12,10 @@ var (
 	ErrConflict   = errors.New("conflict")
 	ErrDatabase   = errors.New("database error")
 
-	// Outcomes of a `crm run` / `crm qualify` that ended without finishing
-	// every item. The run and its checkpoints are saved (resumable); the
-	// error only sets the exit status.
+	// Outcomes of a command that wrote what it could but did not finish
+	// every item: a `crm run` / `crm qualify` (the run and its checkpoints
+	// are saved, resumable) or a `crm table import` with skipped rows
+	// (ErrItemsFailed). The error only sets the exit status.
 	ErrBudgetExhausted = errors.New("budget exhausted")
 	ErrItemsFailed     = errors.New("items failed")
 	ErrInterrupted     = errors.New("interrupted")

@@ -146,7 +146,7 @@ internal/
 - **Transactions** — wrap multi-step mutations in `db.BeginTx()` / `tx.Commit()`.
 - **Soft deletes** — set `archived = 1`, never `DELETE FROM`. Filter `WHERE archived = 0` by default in all queries.
 - **Integer IDs + UUIDs** — integer `id` for CLI/human use, `uuid` column for external/API references. Generate UUIDs with `google/uuid`.
-- **Exit codes** — 0=success, 1=error, 2=usage error, 3=not found, 4=conflict, 5=run budget exhausted, 6=run completed with failed items, 7=run interrupted (no signal), 10=db error, 128+n=stopped by signal n. `crm run`/`crm qualify` return the 5–7 sentinels after printing the summary (`runOutcome` in `internal/cli/run.go`). Use `os.Exit()` only in `main.go`; commands return errors that bubble up.
+- **Exit codes** — 0=success, 1=error, 2=usage error, 3=not found, 4=conflict, 5=run budget exhausted, 6=run completed with failed items (or table import skipped rows), 7=run interrupted (no signal), 10=db error, 128+n=stopped by signal n. `crm run`/`crm qualify` return the 5–7 sentinels after printing the summary (`runOutcome` in `internal/cli/run.go`). Use `os.Exit()` only in `main.go`; commands return errors that bubble up.
 - **stdout/stderr discipline** — data output (tables, JSON, CSV) goes to `os.Stdout` only. All human messages (success confirmations, progress, warnings, errors) go to `os.Stderr`. Critical for piping.
 - **Output format** — respect `--format` flag everywhere. Default to table for TTY, JSON for pipes. Check with `golang.org/x/term.IsTerminal(int(os.Stdout.Fd()))`.
 - **Error handling** — return `error` from all functions. Define sentinel errors and typed errors in `model/errors.go`. Cobra's `RunE` propagates errors to the root command which formats them.

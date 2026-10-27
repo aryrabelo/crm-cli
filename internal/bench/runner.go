@@ -182,8 +182,16 @@ func setup(ctx context.Context, d *sql.DB, t *Task, m Mode) error {
 		if err != nil {
 			return err
 		}
-		_, err = service.New(d, nil).ImportCSV(ctx, table.ImportOptions{Name: s.Name, Key: s.Key, Source: s.CSV}, parsed)
-		return err
+		res, err := service.New(d, nil).ImportCSV(ctx, table.ImportOptions{Name: s.Name, Key: s.Key, Source: s.CSV}, parsed)
+		if err != nil {
+			return err
+		}
+		for _, r := range res.Results {
+			if r.Err != nil {
+				return fmt.Errorf("setup %s: %w", s.CSV, r.Err)
+			}
+		}
+		return nil
 	default:
 		s := t.Setup.Entities
 		if s == nil {

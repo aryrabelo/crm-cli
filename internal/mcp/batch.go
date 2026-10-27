@@ -31,7 +31,9 @@ const mcpSource = "mcp"
 func (s *Server) registerBatchTools() {
 	s.mcp.AddTool(gomcp.NewTool("crm_table_import",
 		gomcp.WithDescription("Create or append to a table from CSV text or an array of row objects, in one call. "+
-			"With a key column, rows whose key exists are updated. Invalid rows are reported per item; the others are written."),
+			"With a key column, rows whose key exists are updated. A header error (empty or repeated header, key column "+
+			"missing from the header) fails the whole call and writes nothing; a row error (empty or repeated key) is "+
+			"reported in that row's result and the other rows are written."),
 		gomcp.WithInputSchema[importArgs]()), s.tableImport)
 	s.mcp.AddTool(gomcp.NewTool("crm_rows_upsert_many",
 		gomcp.WithDescription("Upsert many rows into an existing table: each row object sets only the cells it names; "+
@@ -182,24 +184,23 @@ func (s *Server) tableImport(ctx context.Context, req gomcp.CallToolRequest) (*g
 	if (a.CSV == "") == (a.Rows == nil) {
 		return gomcp.NewToolResultError("give exactly one of csv or rows"), nil
 	}
-	columns, rows := a.Columns, rowCells(a.Rows)
+	opts := table.ImportOptions{Name: a.Table, Key: a.Key, Source: mcpSource}
+	var res *table.ImportResult
 	if a.CSV != "" {
 		t, err := csvio.Parse([]byte(a.CSV))
 		if err != nil {
 			return gomcp.NewToolResultError("invalid csv: " + err.Error()), nil
 		}
-		columns, rows = t.Header, make([][]table.Cell, len(t.Rows))
-		for i, rec := range t.Rows {
-			cells := make([]table.Cell, len(t.Header))
-			for j, h := range t.Header {
-				cells[j] = table.Cell{Column: h, Value: rec[j]}
-			}
-			rows[i] = cells
+		// The same service call as `crm table import`, so both behave alike.
+		res, err = s.svc.ImportCSV(ctx, opts, t)
+		if err != nil {
+			return toolError(err)
 		}
-	}
-	res, err := s.svc.UpsertRows(ctx, table.ImportOptions{Name: a.Table, Key: a.Key, Source: mcpSource}, columns, rows, false)
-	if err != nil {
-		return toolError(err)
+	} else {
+		var err error
+		if res, err = s.svc.UpsertRows(ctx, opts, a.Columns, rowCells(a.Rows), false); err != nil {
+			return toolError(err)
+		}
 	}
 	return jsonResult(importData(res))
 }

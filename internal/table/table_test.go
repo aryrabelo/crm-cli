@@ -68,22 +68,41 @@ func mustRows(t *testing.T, s *table.Store, id int64) []*table.Row {
 	return rows
 }
 
+// Header errors fail the whole import; row errors skip only their row.
 func TestImport_Validation(t *testing.T) {
 	ctx := context.Background()
 	_, s := openStore(t)
-	cases := map[string]struct {
+	header := map[string]struct {
 		key, csv, want string
 	}{
-		"empty key":     {"id", "id,a\n1,x\n,y\n", "key column \"id\" is empty"},
-		"duplicate key": {"id", "id,a\n1,x\n1,y\n", "same key"},
-		"missing key":   {"nope", "id,a\n1,x\n", "not in the CSV header"},
-		"dup header":    {"", "a,a\n1,2\n", "same header"},
+		"missing key":  {"nope", "id,a\n1,x\n", "not in the CSV header"},
+		"dup header":   {"", "a,a\n1,2\n", "same header"},
+		"empty header": {"", "a,\n1,2\n", "empty header"},
 	}
-	for name, tc := range cases {
+	for name, tc := range header {
 		t.Run(name, func(t *testing.T) {
 			_, err := s.Import(ctx, table.ImportOptions{Name: "t-" + strings.ReplaceAll(name, " ", "-"), Key: tc.key}, parse(t, tc.csv))
 			require.ErrorContains(t, err, tc.want)
 			assert.ErrorIs(t, err, model.ErrValidation)
+		})
+	}
+	rows := map[string]struct {
+		csv, want string
+	}{
+		"empty key":     {"id,a\n1,x\n,y\n", "row 2: key column \"id\" is empty"},
+		"duplicate key": {"id,a\n1,x\n1,y\n", "rows 1 and 2 have the same key"},
+	}
+	for name, tc := range rows {
+		t.Run(name, func(t *testing.T) {
+			res, err := s.Import(ctx, table.ImportOptions{Name: "r-" + strings.ReplaceAll(name, " ", "-"), Key: "id"}, parse(t, tc.csv))
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Created, "the valid row is written")
+			assert.Equal(t, 1, res.Failed)
+			require.Len(t, res.Results, 2)
+			assert.NoError(t, res.Results[0].Err)
+			require.ErrorContains(t, res.Results[1].Err, tc.want)
+			assert.ErrorIs(t, res.Results[1].Err, model.ErrValidation)
+			assert.Len(t, mustRows(t, s, res.Workspace.ID), 1)
 		})
 	}
 	_, err := s.Import(ctx, table.ImportOptions{Name: "bad name"}, parse(t, "a\n1\n"))
