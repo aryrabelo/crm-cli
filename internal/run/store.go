@@ -278,25 +278,20 @@ func (s *Store) Stats(ctx context.Context, runID int64) (Stats, error) {
 	return st, nil
 }
 
-// SetBudget changes the budget of a run (resume with a larger budget).
-func (s *Store) SetBudget(ctx context.Context, runID int64, budget provider.Cost) error {
-	if _, err := s.db.ExecContext(ctx,
-		"UPDATE runs SET budget_micros = ?, status = ?, finished_at = NULL WHERE id = ?", budget, StatusRunning, runID); err != nil {
-		return fmt.Errorf("update run %d budget: %w", runID, err)
-	}
-	return nil
-}
-
-// Finish records the final status and stats of a run invocation.
-func (s *Store) Finish(ctx context.Context, runID int64, status Status, st Stats) error {
+// Finish records the final status and stats of a run invocation and
+// releases owner's lease. It fails with ErrLeaseLost when owner no longer
+// holds the run (another executor took it over).
+func (s *Store) Finish(ctx context.Context, runID int64, owner string, status Status, st Stats) error {
 	enc, err := json.Marshal(st)
 	if err != nil {
 		return fmt.Errorf("encode run stats: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx,
-		"UPDATE runs SET status = ?, stats = ?, finished_at = datetime('now') WHERE id = ?",
-		status, string(enc), runID); err != nil {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE runs SET status = ?, stats = ?, finished_at = datetime('now'), owner = NULL, heartbeat_at = NULL
+		 WHERE id = ? AND owner = ?`,
+		status, string(enc), runID, owner)
+	if err != nil {
 		return fmt.Errorf("finish run %d: %w", runID, err)
 	}
-	return nil
+	return oneRow(res, runID)
 }

@@ -56,6 +56,9 @@ type Options struct {
 	// treats them as if they were (a new column replaces nothing, an existing
 	// name is redefined). Execute rejects it: save the columns first.
 	Preview []*column.Column
+	// LeaseTimeout is how long the executor's heartbeat may be silent before
+	// another executor may take the run over (0: DefaultLeaseTimeout).
+	LeaseTimeout time.Duration
 }
 
 // Engine runs and estimates batch runs.
@@ -302,13 +305,34 @@ func (e *Engine) Execute(ctx context.Context, opts Options) (*Result, error) {
 		if opts.BudgetSet {
 			r.Budget = opts.Budget
 		}
-		if err := rs.SetBudget(ctx, r.ID, r.Budget); err != nil {
-			return nil, err
-		}
 	} else if r, p, err = e.create(ctx, opts); err != nil {
 		return nil, err
 	}
 
+	// One executor per run: claim the lease before reading the open items
+	// and the spent total, so a concurrent executor can neither process the
+	// same items nor spend the same budget.
+	lease := opts.LeaseTimeout
+	if lease <= 0 {
+		lease = DefaultLeaseTimeout
+	}
+	owner := newOwner()
+	if err := rs.Claim(ctx, r.ID, owner, r.Budget, time.Now(), lease); err != nil {
+		return nil, err
+	}
+	bg := context.WithoutCancel(ctx)
+	runID, finished := r.ID, false
+	defer func() {
+		if !finished {
+			_ = rs.Release(bg, runID, owner)
+		}
+	}()
+	// Re-read the run under the lease: spent and stats may have changed
+	// since it was loaded (a previous executor finished in between).
+	if r, err = rs.Get(ctx, runID); err != nil {
+		return nil, err
+	}
+	previous := r.Stats.DurationMS
 	items, err := rs.Items(ctx, r.ID, true)
 	if err != nil {
 		return nil, err
@@ -320,20 +344,42 @@ func (e *Engine) Execute(ctx context.Context, opts Options) (*Result, error) {
 		plan:   p,
 		opts:   opts,
 		budget: newBudget(r.Budget, r.Spent),
+		runID:  r.ID,
+		owner:  owner,
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	queue := make(chan *rowJob)
-	var wg sync.WaitGroup
 	var fatalOnce sync.Once
 	var fatal error
+	fail := func(err error) { fatalOnce.Do(func() { fatal = err; cancel() }) }
+
+	beatDone := make(chan struct{})
+	go func() {
+		defer close(beatDone)
+		tick := time.NewTicker(lease / 3)
+		defer tick.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case now := <-tick.C:
+				if err := rs.Heartbeat(bg, r.ID, owner, now); errors.Is(err, ErrLeaseLost) {
+					fail(err)
+					return
+				}
+			}
+		}
+	}()
+
+	queue := make(chan *rowJob)
+	var wg sync.WaitGroup
 	for range opts.Concurrency {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for job := range queue {
 				if err := w.process(runCtx, job); err != nil {
-					fatalOnce.Do(func() { fatal = err; cancel() })
+					fail(err)
 				}
 			}
 		}()
@@ -348,15 +394,20 @@ feed:
 	}
 	close(queue)
 	wg.Wait()
+	cancel()
+	<-beatDone
 
+	if errors.Is(fatal, ErrLeaseLost) {
+		finished = true // the new holder owns the run's state
+		return nil, fatal
+	}
 	// Final bookkeeping must land even when the run was interrupted.
-	bg := context.WithoutCancel(ctx)
 	st, err := rs.Stats(bg, r.ID)
 	if err != nil {
 		return nil, err
 	}
 	elapsed := time.Since(started)
-	st.DurationMS = r.Stats.DurationMS + elapsed.Milliseconds()
+	st.DurationMS = previous + elapsed.Milliseconds()
 	status := StatusCompleted
 	switch {
 	case ctx.Err() != nil || fatal != nil || st.Pending > 0:
@@ -364,9 +415,10 @@ feed:
 	case st.Skipped > 0:
 		status = StatusBudgetExhausted
 	}
-	if err := rs.Finish(bg, r.ID, status, st); err != nil {
+	if err := rs.Finish(bg, r.ID, owner, status, st); err != nil {
 		return nil, err
 	}
+	finished = true
 	if fatal != nil {
 		return nil, fatal
 	}
@@ -468,6 +520,9 @@ type worker struct {
 	plan   *plan
 	opts   Options
 	budget *budget
+	// runID and owner identify the lease every checkpoint renews.
+	runID int64
+	owner string
 }
 
 // call is the waterfall CallFunc: reserve budget, respect the provider's
@@ -561,7 +616,14 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 
 		bg := context.WithoutCancel(ctx)
 		err := w.engine.inTx(bg, func(tx *sql.Tx) error {
-			if err := NewStore(tx).SaveItem(bg, it); err != nil {
+			// The checkpoint renews the lease and lands only while this
+			// executor still holds the run, so a taken-over run is never
+			// written (or its spend counted) twice.
+			rs := NewStore(tx)
+			if err := rs.Heartbeat(bg, w.runID, w.owner, time.Now()); err != nil {
+				return err
+			}
+			if err := rs.SaveItem(bg, it); err != nil {
 				return err
 			}
 			if cells != nil {
