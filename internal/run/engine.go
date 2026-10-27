@@ -166,6 +166,10 @@ type ColumnEstimate struct {
 	// every uncached provider of the waterfall is called.
 	Expected provider.Cost
 	Worst    provider.Cost
+	// Unbounded counts items whose worst case has no upper bound (an
+	// input-size-priced provider reading a column computed earlier in the
+	// same run); Expected and Worst are lower bounds when it is not 0.
+	Unbounded int
 }
 
 // Estimate is the projected work of a run, per column and in total.
@@ -241,6 +245,9 @@ func (p *plan) estimate(ctx context.Context, open map[int64]map[int64]bool) (*Es
 			ce.Calls += we.Calls
 			ce.Expected += we.Expected
 			ce.Worst += we.Worst
+			if we.Unbounded {
+				ce.Unbounded++
+			}
 		}
 	}
 	est.Total.Column = "TOTAL"
@@ -251,6 +258,7 @@ func (p *plan) estimate(ctx context.Context, open map[int64]map[int64]bool) (*Es
 		est.Total.Calls += ce.Calls
 		est.Total.Expected += ce.Expected
 		est.Total.Worst += ce.Worst
+		est.Total.Unbounded += ce.Unbounded
 	}
 	return est, nil
 }
@@ -479,10 +487,13 @@ func (e *Engine) create(ctx context.Context, opts Options) (*Run, *plan, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	if !opts.BudgetSet && est.Total.Worst > 0 {
+	if !opts.BudgetSet && (est.Total.Worst > 0 || est.Total.Unbounded > 0) {
+		worst := est.Total.Worst.String()
+		if est.Total.Unbounded > 0 {
+			worst = "an unbounded amount (at least " + worst + ")"
+		}
 		return nil, nil, model.NewExitError(model.ErrValidation,
-			"this run may spend up to %s (expected %s); set --budget USD (preview with --dry-run)",
-			est.Total.Worst, est.Total.Expected)
+			"this run may spend %s (expected %s); set --budget USD (preview with --dry-run)", worst, est.Total.Expected)
 	}
 	r := &Run{WorkspaceID: p.ws.ID, Table: p.ws.Name, Columns: opts.Columns, Budget: opts.Budget}
 	colIDs := make([]int64, len(p.targets))

@@ -97,15 +97,23 @@ func RunData(r *run.Run) map[string]any {
 
 // EstimateData is the output record of one column (or the total) of a dry run.
 func EstimateData(ce *run.ColumnEstimate) map[string]any {
-	return map[string]any{
-		"column":       ce.Column,
-		"items":        ce.Items,
-		"cache_hits":   ce.CacheHits,
-		"no_input":     ce.NoInput,
-		"calls":        ce.Calls,
-		"expected":     ce.Expected.String(),
-		"expected_usd": ce.Expected.USD(),
-		"worst":        ce.Worst.String(),
-		"worst_usd":    ce.Worst.USD(),
+	m := map[string]any{
+		"column":          ce.Column,
+		"items":           ce.Items,
+		"cache_hits":      ce.CacheHits,
+		"no_input":        ce.NoInput,
+		"calls":           ce.Calls,
+		"expected":        ce.Expected.String(),
+		"expected_usd":    ce.Expected.USD(),
+		"worst":           ce.Worst.String(),
+		"worst_usd":       ce.Worst.USD(),
+		"unbounded_items": ce.Unbounded,
 	}
+	if ce.Unbounded > 0 {
+		// The usd fields are lower bounds: the prompt size of these items
+		// depends on a column computed earlier in the same run.
+		m["expected"] = "≥ " + ce.Expected.String()
+		m["worst"] = "unbounded (≥ " + ce.Worst.String() + ")"
+	}
+	return m
 }

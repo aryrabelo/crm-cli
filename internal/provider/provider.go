@@ -70,6 +70,19 @@ type Adapter interface {
 	Key(in Input) Hash
 }
 
+// InputSized is implemented by adapters whose price grows with the size of
+// the input (llm: prompt tokens). Their Estimate for an input that is not
+// known yet (a column computed earlier in the same run) has no upper bound.
+type InputSized interface {
+	InputSized() bool
+}
+
+// PricedByInputSize reports whether a's estimate grows with the input size.
+func PricedByInputSize(a Adapter) bool {
+	s, ok := a.(InputSized)
+	return ok && s.InputSized()
+}
+
 // Error is a provider failure. Retryable errors (429, 5xx, timeouts, network)
 // may succeed on a later attempt; RetryAfter is the provider's hint, if any.
 type Error struct {

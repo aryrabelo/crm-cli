@@ -58,9 +58,16 @@ func printEstimate(est *run.Estimate, opts run.Options) error {
 	}
 	data = append(data, service.EstimateData(&est.Total))
 	t := est.Total
+	worst := t.Worst.String()
+	if t.Unbounded > 0 {
+		worst = "unbounded, at least " + worst
+	}
 	fmt.Fprintf(os.Stderr, "dry run on %s: %d items, %d cache hits, %d without input, %d to call — est. %s (worst case %s); nothing written\n",
-		est.Table, t.Items, t.CacheHits, t.NoInput, t.Calls, t.Expected, t.Worst)
-	if opts.BudgetSet && t.Worst > opts.Budget {
+		est.Table, t.Items, t.CacheHits, t.NoInput, t.Calls, t.Expected, worst)
+	if t.Unbounded > 0 {
+		fmt.Fprintf(os.Stderr, "%d item(s) send a prompt built from a column computed earlier in this run, so its size (and price) is not known yet; the budget still caps the run and items that do not fit are skipped\n", t.Unbounded)
+	}
+	if opts.BudgetSet && (t.Worst > opts.Budget || t.Unbounded > 0) {
 		fmt.Fprintf(os.Stderr, "budget %s may not cover the worst case; items that do not fit will be skipped (resumable)\n", opts.Budget)
 	}
 	return format.Output(os.Stdout, resolveFormat(), data, estimateColumns, false)

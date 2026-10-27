@@ -146,6 +146,10 @@ type Estimate struct {
 	Expected provider.Cost
 	// Worst is the cost if every uncached provider has to be called.
 	Worst provider.Cost
+	// Unbounded: in is not known yet and a provider that would be called is
+	// priced by input size (provider.InputSized), so Worst has no upper
+	// bound; Expected and Worst are lower bounds then.
+	Unbounded bool
 }
 
 // Estimate projects what Run would spend for in without calling anyone.
@@ -182,6 +186,9 @@ func (w *Waterfall) Estimate(ctx context.Context, in provider.Input, field strin
 			est.Expected = c
 		}
 		est.Worst += c
+		if !known && provider.PricedByInputSize(s.Adapter) {
+			est.Unbounded = true
+		}
 	}
 	return est, nil
 }

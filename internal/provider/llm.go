@@ -175,6 +175,9 @@ func (b *boundLLM) Estimate(in Input) Cost {
 	return b.llm.cost(first+repair, 2*int64(b.llm.maxTokens))
 }
 
+// InputSized: prompt tokens are priced, so the cost grows with the prompt.
+func (b *boundLLM) InputSized() bool { return b.llm.priceIn > 0 }
+
 func (b *boundLLM) Enrich(ctx context.Context, in Input) (Output, Cost, error) {
 	msgs := b.messages(in.Value)
 	content, cost, err := b.llm.complete(ctx, msgs)
