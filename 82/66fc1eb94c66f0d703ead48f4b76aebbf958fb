@@ -1,0 +1,30 @@
+CHANGELOG.md
+  h_b156936c57c455 43
+README.md
+  h_b156936c57c455 349
+internal/cli/redact_test.go
+  h_b156936c57c455 1-61
+internal/mcp/redact_test.go
+  h_b156936c57c455 1-55
+internal/provider/httpcall.go
+  h_b156936c57c455 18-19,26,35,45
+internal/provider/redact.go
+  h_b156936c57c455 1-96
+internal/provider/redact_test.go
+  h_b156936c57c455 1-54
+internal/run/engine.go
+  h_b156936c57c455 622,634
+internal/service/run.go
+  h_b156936c57c455 8,54-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8266fc1eb94c66f0d703ead48f4b76aebbf958fb",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
