@@ -1,0 +1,30 @@
+CHANGELOG.md
+  h_b156936c57c455 48
+README.md
+  h_b156936c57c455 203
+internal/cli/run.go
+  h_b156936c57c455 61-64,66-70
+internal/provider/llm.go
+  h_b156936c57c455 178-180
+internal/provider/provider.go
+  h_b156936c57c455 73-85
+internal/run/engine.go
+  h_b156936c57c455 169-172,248-250,261,490-494,496
+internal/run/unbounded_test.go
+  h_b156936c57c455 1-45
+internal/service/run.go
+  h_b156936c57c455 100-110,112-118
+internal/waterfall/waterfall.go
+  h_b156936c57c455 149-152,189-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "041b71398e6d9074e9b6dd2f0b47c8f84b28ae12",
+  "prompts": {},
+  "humans": {
+    "h_b156936c57c455": {
+      "author": "Ary Rabelo <aryrabelo@gmail.com>"
+    }
+  }
+}
