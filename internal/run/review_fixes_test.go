@@ -46,7 +46,7 @@ func TestDependent_SourceFailureKeepsDependentOpen(t *testing.T) {
 
 	res, err := e.engine.Execute(ctx, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 3, res.Run.Stats.Failed+res.Run.Stats.Skipped+res.Run.Stats.Pending-3, "shout items stay open")
+	assert.Equal(t, 6, res.Run.Stats.Failed, "email failed and shout stays open (failed), not empty")
 	assert.Zero(t, res.Run.Stats.Empty, "an unanswered source is not an empty result")
 	assert.Zero(t, res.Run.Stats.OK)
 

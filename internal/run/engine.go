@@ -19,6 +19,7 @@ import (
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/jdanielnd/crm-cli/internal/provider"
 	"github.com/jdanielnd/crm-cli/internal/table"
+	"github.com/jdanielnd/crm-cli/internal/value"
 	"github.com/jdanielnd/crm-cli/internal/waterfall"
 )
 
@@ -79,8 +80,9 @@ func NewEngine(db *sql.DB, registry *provider.Registry) *Engine {
 type target struct {
 	col *column.Column
 	wf  *waterfall.Waterfall
-	// dependent: the input column is computed earlier in the same run.
-	dependent bool
+	// computed lists the source columns of col that are computed earlier in
+	// the same run (empty: every input is an already stored cell).
+	computed []string
 }
 
 type plan struct {
@@ -147,8 +149,8 @@ func (e *Engine) prepare(ctx context.Context, tableName string, names, only []st
 					"column %q reads %q: list %q before %q in --columns", name, src, src, name)
 			}
 		}
-		dependent := slices.ContainsFunc(c.Sources(cols), func(src string) bool { return slices.Contains(names[:i], src) })
-		t := &target{col: c, wf: wf, dependent: dependent}
+		computed := slices.DeleteFunc(slices.Clone(c.Sources(cols)), func(src string) bool { return !slices.Contains(names[:i], src) })
+		t := &target{col: c, wf: wf, computed: computed}
 		p.targets = append(p.targets, t)
 		p.byColumn[c.ID] = t
 	}
@@ -237,11 +239,12 @@ func (p *plan) estimate(ctx context.Context, open map[int64]map[int64]bool) (*Es
 			ce := est.Columns[i]
 			ce.Items++
 			in := t.col.Input(cells)
-			// A dependent column's input is only unknown while its source is
-			// still empty (computed in this run); a persisted source value
-			// lets the estimate consult the cache like the run will.
-			known := !t.dependent || in.Value != ""
-			if in.Value == "" && !t.dependent {
+			// A dependent column's input is unknown while a source computed
+			// in this run is still empty; once every such source is
+			// persisted, the estimate consults the cache like the run will.
+			dependent := len(t.computed) > 0
+			known := !slices.ContainsFunc(t.computed, func(src string) bool { return value.Empty(cells[src]) })
+			if in.Value == "" && !dependent {
 				ce.NoInput++
 				continue
 			}
