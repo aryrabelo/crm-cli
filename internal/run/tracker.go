@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -14,6 +15,7 @@ type Tracker struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	mu     sync.Mutex
+	closed bool
 	active map[int64]context.CancelFunc
 	errs   map[int64]error
 }
@@ -25,14 +27,21 @@ func NewTracker() *Tracker {
 }
 
 // Start executes fn for run id on a goroutine (typically Engine.Execute with
-// Options.Resume = id); its error is kept for State.
+// Options.Resume = id); its error is kept for State. After Close nothing
+// starts: the run is recorded with ErrTrackerClosed instead.
 func (t *Tracker) Start(id int64, fn func(context.Context) error) {
-	ctx, cancel := context.WithCancel(t.ctx)
 	t.mu.Lock()
+	if t.closed {
+		t.errs[id] = ErrTrackerClosed
+		t.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(t.ctx)
 	t.active[id] = cancel
 	delete(t.errs, id)
-	t.mu.Unlock()
+	// Registered under mu, so Close cannot Wait past a run it never saw.
 	t.wg.Add(1)
+	t.mu.Unlock()
 	go func() {
 		defer t.wg.Done()
 		defer cancel()
@@ -69,6 +78,12 @@ func (t *Tracker) Cancel(id int64) bool {
 
 // Close cancels every run and waits for them to record their state.
 func (t *Tracker) Close() {
+	t.mu.Lock()
+	t.closed = true
+	t.mu.Unlock()
 	t.cancel()
 	t.wg.Wait()
 }
+
+// ErrTrackerClosed is the state of a run started after Close.
+var ErrTrackerClosed = errors.New("run tracker closed")
