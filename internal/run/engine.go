@@ -141,6 +141,12 @@ func (e *Engine) prepare(ctx context.Context, tableName string, names, only []st
 				p.limiters[cfg.Name] = provider.NewLimiter(cfg.Rate)
 			}
 		}
+		for _, src := range c.Sources(cols) {
+			if src != name && slices.Contains(names[i+1:], src) {
+				return nil, model.NewExitError(model.ErrValidation,
+					"column %q reads %q: list %q before %q in --columns", name, src, src, name)
+			}
+		}
 		dependent := slices.ContainsFunc(c.Sources(cols), func(src string) bool { return slices.Contains(names[:i], src) })
 		t := &target{col: c, wf: wf, dependent: dependent}
 		p.targets = append(p.targets, t)
@@ -231,11 +237,15 @@ func (p *plan) estimate(ctx context.Context, open map[int64]map[int64]bool) (*Es
 			ce := est.Columns[i]
 			ce.Items++
 			in := t.col.Input(cells)
+			// A dependent column's input is only unknown while its source is
+			// still empty (computed in this run); a persisted source value
+			// lets the estimate consult the cache like the run will.
+			known := !t.dependent || in.Value != ""
 			if in.Value == "" && !t.dependent {
 				ce.NoInput++
 				continue
 			}
-			we, err := t.wf.Estimate(ctx, in, t.col.Config.Field, !t.dependent)
+			we, err := t.wf.Estimate(ctx, in, t.col.Config.Field, known)
 			if err != nil {
 				return nil, err
 			}
@@ -388,14 +398,18 @@ func (e *Engine) Execute(ctx context.Context, opts Options) (*Result, error) {
 	beatDone := make(chan struct{})
 	go func() {
 		defer close(beatDone)
-		tick := time.NewTicker(lease / 3)
+		// lease/3 is zero for sub-3ns timeouts; NewTicker panics on that.
+		tick := time.NewTicker(max(lease/3, time.Nanosecond))
 		defer tick.Stop()
 		for {
 			select {
 			case <-runCtx.Done():
 				return
 			case now := <-tick.C:
-				if err := rs.Heartbeat(bg, r.ID, owner, now); errors.Is(err, ErrLeaseLost) {
+				// Any heartbeat failure is fatal: once the lease may have
+				// lapsed unnoticed, another executor can start the same
+				// items while this one keeps issuing paid calls.
+				if err := rs.Heartbeat(bg, r.ID, owner, now); err != nil {
 					fail(err)
 					return
 				}
@@ -514,7 +528,21 @@ func (e *Engine) Start(ctx context.Context, opts Options) (*Run, error) {
 		return nil, model.NewExitError(model.ErrValidation, "Start creates a new run: drop the resume run and preview columns")
 	}
 	r, _, err := e.create(ctx, opts)
-	return r, err
+	if err != nil {
+		return nil, err
+	}
+	// create only knows the ID: reload the persisted run (timestamps) and
+	// its live item stats, as RunStatus does.
+	rs := NewStore(e.db)
+	st, err := rs.Stats(ctx, r.ID)
+	if err != nil {
+		return nil, err
+	}
+	if r, err = rs.Get(ctx, r.ID); err != nil {
+		return nil, err
+	}
+	r.Stats = st
+	return r, nil
 }
 
 type rowJob struct {
@@ -589,13 +617,16 @@ func (w *worker) call(ctx context.Context, step waterfall.Step, in provider.Inpu
 		if err == nil {
 			return out, total, attempts, nil
 		}
+		// A paid non-idempotent request that was sent without a response may
+		// have been billed: decide that before honouring cancellation, so a
+		// Ctrl-C does not return the item to pending and re-send it on resume.
+		if sent && !idempotent && est > 0 && !w.opts.RetryUncertain {
+			return nil, total, attempts, fmt.Errorf("%w (sent without a response: charged at the estimate %s and not retried; --retry-uncertain retries)", errSentUncertain{err}, est)
+		}
 		if ctx.Err() != nil {
 			return nil, total, attempts, ctx.Err()
 		}
 		retry, hint := provider.Retryable(err)
-		if sent && !idempotent && est > 0 && !w.opts.RetryUncertain {
-			return nil, total, attempts, fmt.Errorf("%w (sent without a response: charged at the estimate %s and not retried; --retry-uncertain retries)", err, est)
-		}
 		if !retry || attempts > w.opts.Retry {
 			return nil, total, attempts, err
 		}
@@ -604,6 +635,13 @@ func (w *worker) call(ctx context.Context, step waterfall.Step, in provider.Inpu
 		}
 	}
 }
+
+// errSentUncertain marks a paid call that was sent without a response; it
+// wraps the cause and tells process to fail the item (not return it to
+// pending) even when the run was cancelled meanwhile.
+type errSentUncertain struct{ error }
+
+func (e errSentUncertain) Unwrap() error { return e.error }
 
 type uncertainKey struct{}
 
@@ -627,6 +665,7 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 	for k, v := range job.row.Data {
 		data[k] = v
 	}
+	done := map[string]string{} // column name → status of its item in this row, this run
 	for _, it := range job.items {
 		if ctx.Err() != nil {
 			return nil
@@ -644,7 +683,14 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 		it.TokensIn, it.TokensOut = 0, 0
 		it.Value, it.Provider, it.Error = nil, nil, nil
 		var cells map[string]any // nil: no cell is written
-		if in.Value == "" {
+		if src, st := w.blockedBy(t, done); in.Value == "" && st != "" {
+			// The source is not done (failed, skipped or interrupted): the
+			// empty input says nothing, so the dependent stays open.
+			it.Status = st
+			if st != ItemPending {
+				it.Error = ptr("source column " + src + " is " + st)
+			}
+		} else if in.Value == "" {
 			it.Status = ItemEmpty
 			cells = t.col.Cells(nil)
 		} else {
@@ -658,6 +704,9 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 			case errors.Is(err, ErrBudgetExhausted):
 				it.Status = ItemSkipped
 				it.Error = ptr("budget exhausted")
+			case errors.As(err, new(errSentUncertain)):
+				it.Status = ItemFailed
+				it.Error = ptr(provider.RedactError(err.Error()))
 			case err != nil && ctx.Err() != nil:
 				it.Status = ItemPending
 			case err != nil:
@@ -702,11 +751,25 @@ func (w *worker) process(ctx context.Context, job *rowJob) error {
 		if err != nil {
 			return err
 		}
+		done[t.col.Name] = it.Status
 		for name, v := range cells {
 			data[name] = v
 		}
 	}
 	return nil
+}
+
+// blockedBy reports the first source of t, processed earlier in this row,
+// whose item is still open (pending, failed or skipped), with the status the
+// dependent takes: pending → pending, failed → failed, skipped → skipped.
+func (w *worker) blockedBy(t *target, done map[string]string) (string, string) {
+	for _, src := range t.col.Sources(w.plan.columns) {
+		switch st := done[src]; st {
+		case ItemPending, ItemFailed, ItemSkipped:
+			return src, st
+		}
+	}
+	return "", ""
 }
 
 func ptr(s string) *string { return &s }
