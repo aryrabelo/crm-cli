@@ -8,6 +8,7 @@ package column
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -93,11 +94,48 @@ func resolveRef(ref string, isColumn func(string) bool) (name, path string, ok b
 	return "", "", false
 }
 
+// templateRefs lists the raw {{placeholder}} references of a formula
+// expression or an ai prompt (nil for other column types).
+func (c *Column) templateRefs() []string {
+	var tmpl string
+	switch c.Type {
+	case Formula:
+		tmpl = c.Config.Expr
+	case AI:
+		tmpl = c.Config.Prompt
+	default:
+		return nil
+	}
+	var out []string
+	for _, m := range placeholder.FindAllStringSubmatch(tmpl, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// References returns the columns among columns that the placeholders of a
+// formula or ai column resolve to (duplicates kept, unresolved refs skipped).
+func (c *Column) References(columns []*Column) []string {
+	isColumn := func(n string) bool { return slices.ContainsFunc(columns, func(o *Column) bool { return o.Name == n }) }
+	var out []string
+	for _, ref := range c.templateRefs() {
+		if name, _, ok := resolveRef(ref, isColumn); ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // Validate checks c against the other active columns of its workspace
 // (columns, in declaration order, not including c).
 func (c *Column) Validate(columns []*Column) error {
 	if strings.TrimSpace(c.Name) == "" {
 		return model.NewExitError(model.ErrValidation, "column name is required")
+	}
+	if c.Name != strings.TrimSpace(c.Name) {
+		// The placeholder regex trims references, so such a column could
+		// never be referenced by a formula or prompt.
+		return model.NewExitError(model.ErrValidation, "column name %q has leading or trailing whitespace", c.Name)
 	}
 	exists := func(n string) bool {
 		for _, o := range columns {
@@ -109,6 +147,22 @@ func (c *Column) Validate(columns []*Column) error {
 	}
 	if exists(c.Name) {
 		return model.NewExitError(model.ErrConflict, "column %q already exists", c.Name)
+	}
+	if c.ID == 0 && strings.Contains(c.Name, ".") { // new columns only: an updated one already is what formulas read
+		// A dotted name wins over a "column.path" reference at read time:
+		// refuse it when an existing formula or prompt would silently
+		// switch from reading a JSON path to reading the new column.
+		withNew := func(n string) bool { return n == c.Name || exists(n) }
+		for _, o := range columns {
+			for _, ref := range o.templateRefs() {
+				n1, p1, ok := resolveRef(ref, exists)
+				n2, p2, _ := resolveRef(ref, withNew)
+				if ok && (n1 != n2 || p1 != p2) {
+					return model.NewExitError(model.ErrConflict,
+						"column %q would change what {{%s}} reads in column %q (%s.%s today): rename it", c.Name, ref, o.Name, n1, p1)
+				}
+			}
+		}
 	}
 	aiConfig := c.Config.Prompt != "" || c.Config.Output != "" || c.Config.Reason != "" || c.Config.FieldLimit != 0
 	switch c.Type {
@@ -132,6 +186,9 @@ func (c *Column) Validate(columns []*Column) error {
 		if len(c.Config.Waterfall) == 0 {
 			return model.NewExitError(model.ErrValidation, "enrich column %q needs --waterfall p1,p2,...", c.Name)
 		}
+		if err := checkWaterfall(c); err != nil {
+			return err
+		}
 		if c.Config.Expr != "" || aiConfig {
 			return model.NewExitError(model.ErrValidation, "enrich column %q takes no --expr, --prompt, --output or --explain", c.Name)
 		}
@@ -145,6 +202,17 @@ func (c *Column) Validate(columns []*Column) error {
 		return c.validateAI(exists, columns)
 	default:
 		return model.NewExitError(model.ErrValidation, "column %q: type %q is not supported yet", c.Name, c.Type)
+	}
+	return nil
+}
+
+// checkWaterfall rejects a provider listed twice: it would repeat the same
+// call and inflate the worst-case cost.
+func checkWaterfall(c *Column) error {
+	for i, p := range c.Config.Waterfall {
+		if slices.Contains(c.Config.Waterfall[:i], p) {
+			return model.NewExitError(model.ErrValidation, "column %q: provider %q is listed twice in --waterfall", c.Name, p)
+		}
 	}
 	return nil
 }
