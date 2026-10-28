@@ -36,6 +36,10 @@ func TestMCPServe_HTTPFlags(t *testing.T) {
 		{"short token beyond loopback", []string{"--http", "0.0.0.0:0", "--token", "x"}, "at least 32 characters"},
 		{"token needs http", []string{"--token", "x"}, "--token needs --http"},
 		{"bad address", []string{"--http", "8765"}, "want HOST:PORT"},
+		{"plain http beyond loopback", []string{"--http", "0.0.0.0:0", "--token", strings.Repeat("a", 32)}, "clear text"},
+		{"cert without key", []string{"--http", "127.0.0.1:0", "--tls-cert", "c.pem"}, "go together"},
+		{"tls needs http", []string{"--tls-cert", "c.pem", "--tls-key", "k.pem"}, "need --http"},
+		{"unreadable tls files", []string{"--http", "127.0.0.1:0", "--tls-cert", "nope.pem", "--tls-key", "nope.key"}, "--tls-cert/--tls-key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

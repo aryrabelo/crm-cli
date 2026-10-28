@@ -29,6 +29,7 @@ func registerUICommand(rootCmd *cobra.Command) {
 func uiCmd() *cobra.Command {
 	var addr, token string
 	var open bool
+	var tlsOpt tlsFlags
 	cmd := &cobra.Command{
 		Use:   "ui",
 		Short: "Open the spreadsheet UI: tables, columns, estimates and live runs in the browser",
@@ -43,7 +44,10 @@ Security: every API request needs the session token.
     to the server or written to logs); the page keeps it for that tab only.
   - On a loopback address only Host and Origin values naming 127.0.0.1,
     localhost or [::1] with the bound port are accepted (DNS rebinding), and
-    state-changing requests must be same-site JSON (or CSV) requests.
+    state-changing requests must be same-origin JSON (or CSV) requests.
+  - --tls-cert and --tls-key serve HTTPS. Plain HTTP sends the token in clear
+    text, so a bind beyond this machine refuses to start without TLS unless
+    --behind-tls-proxy says a TLS reverse proxy in front terminates HTTPS.
 
 Runs started from the page execute in this process; Ctrl-C stops the server
 and leaves them interrupted and resumable (crm run --resume). A crm run
@@ -61,6 +65,14 @@ started in another terminal shows up on the page while it executes.`,
 			if err != nil {
 				return err
 			}
+			serveOpts, isTLS, err := tlsOpt.serveOptions(addr, "--addr")
+			if err != nil {
+				return err
+			}
+			scheme := "http"
+			if isTLS {
+				scheme = "https"
+			}
 			db, err := openDB()
 			if err != nil {
 				return err
@@ -69,19 +81,20 @@ started in another terminal shows up on the page while it executes.`,
 			s := ui.New(db, provider.NewEnvRegistry())
 			defer s.Close()
 			return s.Serve(cmd.Context(), addr, token, func(a net.Addr) {
-				url := pageURL(a, token)
-				fmt.Fprintf(os.Stderr, "crm ui: serving on http://%s (Ctrl-C to stop)\n", browserHost(a))
+				url := pageURL(scheme, a, token)
+				fmt.Fprintf(os.Stderr, "crm ui: serving on %s://%s (Ctrl-C to stop)\n", scheme, browserHost(a))
 				fmt.Fprintf(os.Stderr, "crm ui: open this URL (it carries the session token; keep it private):\n    %s\n", url)
 				if open {
 					if err := openBrowser(url); err != nil {
 						fmt.Fprintf(os.Stderr, "crm ui: could not open a browser (%s); open the URL above\n", err)
 					}
 				}
-			})
+			}, serveOpts...)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultUIAddr, "listen on HOST:PORT")
 	cmd.Flags().StringVar(&token, "token", "", "session token required on API requests (default $"+uiTokenEnv+", else generated on loopback)")
+	tlsOpt.register(cmd.Flags())
 	cmd.Flags().BoolVar(&open, "open", false, "open the page in the default browser")
 	return cmd
 }
@@ -100,8 +113,8 @@ func browserHost(a net.Addr) string {
 }
 
 // pageURL is the page URL with the token in its fragment.
-func pageURL(a net.Addr, token string) string {
-	return "http://" + browserHost(a) + "/#token=" + strings.ReplaceAll(url.QueryEscape(token), "+", "%20")
+func pageURL(scheme string, a net.Addr, token string) string {
+	return scheme + "://" + browserHost(a) + "/#token=" + strings.ReplaceAll(url.QueryEscape(token), "+", "%20")
 }
 
 func openBrowser(target string) error {

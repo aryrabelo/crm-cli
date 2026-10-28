@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"crypto/tls"
 	"os"
 
 	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	"github.com/jdanielnd/crm-cli/internal/model"
+	"github.com/spf13/pflag"
 )
 
 // minRemoteTokenLen is the shortest bearer token accepted on an address that
@@ -36,4 +38,39 @@ func resolveHTTPToken(addr, flag, flagToken, envName string) (token string, gene
 		return t, true, nil
 	}
 	return token, false, nil
+}
+
+// tlsFlags are the --tls-cert, --tls-key and --behind-tls-proxy flags of an
+// HTTP server command.
+type tlsFlags struct {
+	cert, key   string
+	behindProxy bool
+}
+
+func (t *tlsFlags) register(f *pflag.FlagSet) {
+	f.StringVar(&t.cert, "tls-cert", "", "serve HTTPS with this PEM certificate (needs --tls-key)")
+	f.StringVar(&t.key, "tls-key", "", "PEM private key of --tls-cert")
+	f.BoolVar(&t.behindProxy, "behind-tls-proxy", false, "allow a plain-HTTP bind beyond this machine because a TLS proxy in front terminates HTTPS")
+}
+
+// serveOptions validates the flags for a server on addr and returns the
+// httpguard options to serve it, plus whether it serves HTTPS. The bearer
+// token crosses the network in clear text over plain HTTP, so a bind beyond
+// this machine needs TLS (or --behind-tls-proxy).
+func (t *tlsFlags) serveOptions(addr, flag string) ([]httpguard.ServeOption, bool, error) {
+	if (t.cert == "") != (t.key == "") {
+		return nil, false, model.NewExitError(model.ErrValidation, "--tls-cert and --tls-key go together")
+	}
+	if t.cert != "" {
+		if _, err := tls.LoadX509KeyPair(t.cert, t.key); err != nil {
+			return nil, false, model.NewExitError(model.ErrValidation, "--tls-cert/--tls-key: %s", err)
+		}
+		return []httpguard.ServeOption{httpguard.WithTLS(t.cert, t.key)}, true, nil
+	}
+	if !httpguard.IsLoopback(addr) && !t.behindProxy {
+		return nil, false, model.NewExitError(model.ErrValidation,
+			"%s %s listens beyond this machine over plain HTTP, which sends the token in clear text: "+
+				"set --tls-cert and --tls-key, or --behind-tls-proxy when a TLS proxy in front terminates HTTPS", flag, addr)
+	}
+	return nil, false, nil
 }
