@@ -48,7 +48,7 @@ internal/
     search.go                  # Cross-entity full-text search
     context.go                 # Person context briefing
     status.go                  # Dashboard summary
-    mcp.go                     # crm mcp serve (stdio, or --http with bearer --token)
+    mcp.go                     # crm mcp serve (stdio, or --http with bearer --token; --tls-cert/--tls-key)
     import.go                  # CSV import (fork: data plane)
     rows.go                    # Row export with custom fields (fork: data plane)
     table.go                   # crm table import/list/show/export (fork: data plane)
@@ -59,7 +59,7 @@ internal/
     qualify.go                 # crm qualify: yes/no/maybe ai column (+ reason) run through crm run (fork: data plane)
     push.go                    # crm push: table rows → people/orgs with dedupe (fork: data plane)
     bench.go                   # crm bench run [--baseline per-entity] (fork: data plane)
-    ui.go                      # crm ui [--addr] [--token] [--open]: spreadsheet page server, prints the #token= URL (fork: data plane)
+    ui.go                      # crm ui [--addr] [--token] [--tls-cert --tls-key] [--open]: spreadsheet page server, prints the #token= URL (fork: data plane)
     custom_fields.go           # Custom field output for show commands
   db/
     db.go                      # Connection, pragmas, migration runner (version = file-name prefix, tracked in schema_migrations)
@@ -70,6 +70,8 @@ internal/
       1003_ai_columns.sql      # run_items tokens_in/out, seeded llm provider (fork: data plane)
       1004_run_lease.sql       # runs.owner/heartbeat_at: one executor per run (fork: data plane)
       1005_uncertain_cost.sql  # run_items.uncertain_micros: calls sent without a response, charged at the estimate (fork: data plane)
+      1006_run_items_workspace.sql # Trigger: a run item's row and column belong to the run's workspace (fork: data plane)
+      1007_import_snapshot_cell_index.sql # import_rows.cells (immutable rows --import) + idx_run_items_cell (fork: data plane)
     repo/
       person.go                # Person repository
       org.go                   # Organization repository
@@ -87,7 +89,7 @@ internal/
   httpguard/
     httpguard.go               # Reusable HTTP guard: mandatory bearer token (Wrap) or Host/Origin-only for static files (WrapPublic), body cap, server timeouts, Serve (fork)
   ui/                          # crm ui (fork: data plane)
-    server.go                  # Thin JSON API over internal/service behind httpguard + same-site/Content-Type CSRF check; static page via go:embed
+    server.go                  # Thin JSON API over internal/service behind httpguard + same-origin/Content-Type CSRF check; static page via go:embed
     static/                    # index.html, app.js, app.css (no framework, no build step)
       vendor/                  # Tabulator 6.3.1 min JS/CSS + LICENSE.tabulator (MIT), vendored as-is
   mcp/
@@ -132,6 +134,7 @@ internal/
   model/
     types.go                   # Domain types, constants, enums
     errors.go                  # Error types with exit codes
+    import.go                  # Import batch/column/EntityRow/BatchRecord types (fork: data plane)
 ```
 
 ## Architecture Rules
@@ -143,8 +146,8 @@ internal/
 3. **Formatters** (`internal/format/`) — transform data to table/json/csv. No business logic.
 4. **Models** (`internal/model/`) — domain types, constants, error types. No imports from other internal packages.
 5. **MCP server** (`internal/mcp/`) — thin wrappers: one-entity tools call the repositories, batch tools call `internal/service`, the same layer the data-plane CLI commands use. No duplicate logic.
-6. **Data plane** (fork: `internal/table`, `internal/column`, `internal/run`, `internal/provider`, `internal/waterfall`, `internal/value`, `internal/service`, `internal/bench`, `internal/ui`) — self-contained packages that own their SQL (parameterized, `repo.DBTX`) so the upstream tree stays untouched except for wiring. Dependency order: `value` ← `provider` ← `waterfall` ← `column` ← `table` ← `run` ← `service` ← `mcp`/`ui` ← `bench` ← `cli`. Money is integer micro-USD (`provider.Cost`).
-   - **`crm ui` handlers are thin, like the MCP batch tools** — each endpoint in `internal/ui/server.go` decodes JSON, calls one `internal/service` method and encodes the result; never compute in the handler or in `app.js` what the service already knows (costs, statuses, filters). Every `/api` route goes through `httpguard.Wrap` (token); state-changing routes are `POST` behind `sameSite` (Sec-Fetch-Site + exact Content-Type). Cell values render as text (`textContent`), never as HTML; Tabulator options that take strings (labels, tooltips) are given DOM elements.
+6. **Data plane** (fork: `internal/table`, `internal/column`, `internal/run`, `internal/provider`, `internal/waterfall`, `internal/value`, `internal/service`, `internal/bench`, `internal/ui`) — self-contained packages that own their SQL (parameterized, `repo.DBTX`) so the upstream tree stays untouched except for wiring. Exception: `internal/bench` is a harness, not a SQL owner; it runs task-supplied check SQL against a scratch in-memory database. Dependency order: `value` ← `provider` ← `waterfall` ← `column` ← `table` ← `run` ← `service` ← `mcp`/`ui` ← `bench` ← `cli`. Money is integer micro-USD (`provider.Cost`).
+   - **`crm ui` handlers are thin, like the MCP batch tools** — each handler in `internal/ui/server.go` decodes what its request carries (JSON, CSV or nothing for a GET), delegates to `internal/service` (and to the run engine/tracker for runs), and encodes the answer (JSON or CSV); some orchestrate several service calls (`viewTable`). No business logic in handlers or `app.js`: never compute in the handler or in `app.js` what the service already knows (costs, statuses, filters). Every `/api` route goes through `httpguard.Wrap` (token); state-changing routes are `POST` behind `sameSite` (same-origin Fetch Metadata: `Sec-Fetch-Site` `same-origin` or `none` when present, plus exact Content-Type). Cell values render as text (`textContent`), never as HTML; Tabulator options that take strings (labels, tooltips) are given DOM elements.
    - **ai columns run through the same engine as enrich columns** — one `crm run` path (budget reservation, cache by (provider, input hash), retry, resume, dry-run); never add a parallel execution path. An adapter's `Estimate` must be an upper bound of what `Enrich` charges (the llm adapter bounds tokens by prompt bytes + max tokens, repair call included), or the budget can be exceeded. LLM token counts travel in the context (`provider.WithUsage`) and land in `run_items.tokens_in/out`.
 
 ### Key Patterns
@@ -187,6 +190,9 @@ func ExitCode(err error) int {
     case errors.Is(err, ErrValidation): return 2
     case errors.Is(err, ErrNotFound):   return 3
     case errors.Is(err, ErrConflict):   return 4
+    case errors.Is(err, ErrBudgetExhausted): return 5
+    case errors.Is(err, ErrItemsFailed): return 6
+    case errors.Is(err, ErrInterrupted): return 7
     case errors.Is(err, ErrDatabase):   return 10
     default:                            return 1
     }

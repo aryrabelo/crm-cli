@@ -60,7 +60,7 @@ func columnAddCmd() *cobra.Command {
   ai       filled by crm run with an llm answer per row: --prompt is a file
            (or inline text) whose {{column}} placeholders are replaced by the
            row's cells; --output types the answer: text, score:MIN-MAX,
-           enum:a|b|c or bool. --explain also stores a 1–2 sentence reason in
+           enum:a|b|c or bool. --explain also stores a short model-written reason in
            <name>_reason. --waterfall picks the llm providers (default llm;
            see crm provider set llm).`,
 		Example: `  crm column add leads profile --type enrich --waterfall github --from login
@@ -100,7 +100,7 @@ func columnAddCmd() *cobra.Command {
 	f.StringVar(&expr, "expr", "", "formula: template with {{column}} placeholders")
 	f.StringVar(&prompt, "prompt", "", "ai: prompt file (.md) or inline text with {{column}} placeholders")
 	f.StringVar(&output, "output", "", "ai: answer type: text (default), score:MIN-MAX, enum:a|b|c or bool")
-	f.BoolVar(&explain, "explain", false, "ai: also store a 1–2 sentence reason in <name>_reason")
+	f.BoolVar(&explain, "explain", false, "ai: also store a short model-written reason in <name>_reason")
 	return cmd
 }
 

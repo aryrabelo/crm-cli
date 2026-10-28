@@ -129,7 +129,7 @@ decision counts, tokens in/out and cost vs budget, and exits like crm run:
 	}
 	f := cmd.Flags()
 	f.StringVar(&criteria, "criteria", "", "markdown file with the qualification criteria (required)")
-	f.BoolVar(&explain, "explain", false, "also store a 1–2 sentence reason per row in <name>_reason")
+	f.BoolVar(&explain, "explain", false, "also store a short model-written reason per row in <name>_reason")
 	f.StringVar(&name, "name", service.DefaultQualifyColumn, "decision column name")
 	f.StringVar(&budget, "budget", "", "spending cap in USD for the run, at the configured token prices (e.g. 0.50; see crm run --help)")
 	f.BoolVar(&dryRun, "dry-run", false, "estimate calls, cost and cache hits; call nothing, write nothing")

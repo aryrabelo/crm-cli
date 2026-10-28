@@ -57,7 +57,7 @@ type Config struct {
 	Prompt string `json:"prompt,omitempty"`
 	// Output is the ai answer type: text, score:MIN-MAX, enum:a|b|c or bool.
 	Output string `json:"output,omitempty"`
-	// Reason is the input column that receives the 1–2 sentence reason the
+	// Reason is the input column that receives the short model-written reason the
 	// llm gives with each ai answer (--explain); empty means no reason.
 	Reason string `json:"reason,omitempty"`
 	// FieldLimit caps each placeholder value of an ai prompt at this many
