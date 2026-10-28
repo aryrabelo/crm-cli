@@ -90,6 +90,7 @@ func TestPush_UsageErrors(t *testing.T) {
 		{"email for orgs", []string{"push", "t", "--to", "org", "--dedupe", "email"}, 2, "needs --to person"},
 		{"no email column", []string{"push", "t", "--to", "person"}, 2, "no column of table t maps to email"},
 		{"bad threshold", []string{"push", "t", "--to", "person", "--dedupe", "fuzz", "--threshold", "2"}, 2, "between 0 and 1"},
+		{"nan threshold", []string{"push", "t", "--to", "person", "--dedupe", "fuzz", "--threshold", "NaN"}, 2, "between 0 and 1"},
 		{"missing table", []string{"push", "nope", "--to", "person"}, 3, "not found"},
 	}
 	for _, tc := range cases {

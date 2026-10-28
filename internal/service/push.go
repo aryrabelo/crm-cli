@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 
@@ -126,7 +127,7 @@ func (s *Service) Push(ctx context.Context, opts PushOptions) (*PushResult, erro
 	if opts.Threshold != nil {
 		threshold = *opts.Threshold
 	}
-	if threshold < 0 || threshold > 1 {
+	if math.IsNaN(threshold) || threshold < 0 || threshold > 1 {
 		return nil, model.NewExitError(model.ErrValidation, "--threshold must be between 0 and 1")
 	}
 
