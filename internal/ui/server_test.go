@@ -447,3 +447,34 @@ func TestUI_RunningCellsAndCancel(t *testing.T) {
 		assert.Equal(t, "pending", row.(map[string]any)["states"].([]any)[3].(map[string]any)["status"])
 	}
 }
+
+// with_sources: running an ai column from its header also runs, first, the
+// enrich columns it reads that still have empty cells; without the flag the
+// request is taken as given.
+func TestUI_WithSourcesAddsUnfilledSourceColumns(t *testing.T) {
+	e := newEnv(t)
+	e.importLeads("leads", "company")
+	e.addIndustry()
+	e.json(http.MethodPost, "/api/tables/leads/columns",
+		map[string]any{"name": "fit", "type": "ai", "prompt": "Score {{company}} in {{industry}}", "output": "score:0-100"}, http.StatusCreated)
+
+	columns := func(out map[string]any) []string {
+		var names []string
+		for _, c := range out["columns"].([]any) {
+			names = append(names, c.(map[string]any)["column"].(string))
+		}
+		return names
+	}
+	alone := e.json(http.MethodPost, "/api/tables/leads/estimate", map[string]any{"columns": []string{"fit"}}, http.StatusOK)
+	assert.Equal(t, []string{"fit"}, columns(alone))
+	with := e.json(http.MethodPost, "/api/tables/leads/estimate", map[string]any{"columns": []string{"fit"}, "with_sources": true}, http.StatusOK)
+	assert.Equal(t, []string{"industry", "fit"}, columns(with))
+
+	id := runIDOf(t, e.json(http.MethodPost, "/api/tables/leads/runs",
+		map[string]any{"columns": []string{"fit"}, "with_sources": true, "budget": "1"}, http.StatusAccepted))
+	e.waitRun(id)
+
+	// industry is filled now: nothing more to add.
+	done := e.json(http.MethodPost, "/api/tables/leads/estimate", map[string]any{"columns": []string{"fit"}, "with_sources": true}, http.StatusOK)
+	assert.Equal(t, []string{"fit"}, columns(done))
+}
