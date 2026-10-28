@@ -457,3 +457,35 @@ func TestServeHTTP_ShutsDownOnCancel(t *testing.T) {
 		t.Fatal("ServeHTTP did not stop")
 	}
 }
+
+// Without columns, new columns of row objects come in sorted order of the
+// union of every row's keys, whatever the order or shape of the rows.
+func TestRowsNewColumnsAreSortedUnion(t *testing.T) {
+	for _, kind := range transports {
+		t.Run(kind, func(t *testing.T) {
+			c := connect(t, newBatchServer(t), kind)
+			out := ok(t, c, "crm_table_import", map[string]any{"table": "u", "key": "k", "rows": []any{
+				map[string]any{"k": "1", "zeta": "z"},
+				map[string]any{"k": "2", "alpha": "a", "mid": "m"},
+			}})
+			assert.Equal(t, []any{"alpha", "k", "mid", "zeta"}, out["new_columns"])
+
+			ok(t, c, "crm_table_import", map[string]any{"table": "w", "key": "k", "csv": "k\n1\n"})
+			out = ok(t, c, "crm_rows_upsert_many", map[string]any{"table": "w", "rows": []any{
+				map[string]any{"k": "1", "zeta": "z"},
+				map[string]any{"k": "1", "beta": "b"},
+			}})
+			assert.Equal(t, []any{"beta", "zeta"}, out["new_columns"])
+		})
+	}
+}
+
+// A column named "_row" cannot hide the row position of a query result.
+func TestTableQuery_RowPositionWinsOverRowColumn(t *testing.T) {
+	c := connect(t, newBatchServer(t), "inprocess")
+	ok(t, c, "crm_table_import", map[string]any{"table": "r", "key": "k", "csv": "k,_row\na,x\nb,y\n"})
+	out := ok(t, c, "crm_table_query", map[string]any{"table": "r"})
+	rows := out["rows"].([]any)
+	require.Len(t, rows, 2)
+	assert.Equal(t, float64(2), rows[1].(map[string]any)["_row"])
+}
