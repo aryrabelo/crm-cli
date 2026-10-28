@@ -32,7 +32,7 @@ button { cursor: pointer; background: var(--panel); }
 button:hover { border-color: #cbd5e1; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button:disabled { opacity: .55; cursor: default; }
-input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid #bfdbfe; outline-offset: 0; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
@@ -93,6 +93,7 @@ main { flex: 1; min-height: 0; position: relative; }
 .cell .v.why { color: var(--err); font-size: 12px; }
 .cell.skipped .v.why { color: var(--warn); }
 @keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .badge.running::before { animation: none; } }
 
 dialog { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; width: min(560px, 92vw); box-shadow: 0 20px 50px rgba(0,0,0,.15); color: var(--fg); }
 dialog::backdrop { background: rgba(17,24,39,.25); }

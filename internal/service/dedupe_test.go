@@ -12,6 +12,8 @@ func TestNormalizeDomain(t *testing.T) {
 		{"acme.io", "acme.io"},
 		{" https://www.Acme.io/about?x=1 ", "acme.io"},
 		{"http://acme.io:8080", "acme.io"},
+		{"[2001:db8::1]", "[2001:db8::1]"},
+		{"http://[::1]:8080/x", "[::1]"},
 		{"Ana@Acme.IO", "acme.io"},
 		{"www.acme.io.", "acme.io"},
 		{"", ""},
@@ -33,6 +35,9 @@ func TestNormalizeName(t *testing.T) {
 		{"Acmé Analytics Ltda", true, "acme analytics"},
 		{"Natura S.A.", true, "natura"},
 		{"The Company", true, "the company"},
+		{"Company One", true, "company one"},
+		{"Acme Co Ltda", true, "acme"},
+		{"Natura S.A. Ltda", true, "natura"},
 		{"Inc", false, "inc"},
 	}
 	for _, tc := range cases {

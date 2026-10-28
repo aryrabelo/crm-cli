@@ -132,10 +132,12 @@ func (s *Service) Query(ctx context.Context, opts QueryOptions) (*QueryResult, e
 	end := min(opts.Offset+opts.Limit, len(view.Rows))
 	for i := opts.Offset; i < end; i++ {
 		m := make(map[string]any, len(view.Columns)+1)
-		m["_row"] = view.Rows[i].Position
 		for _, c := range view.Columns {
 			m[c.Name] = view.Cells[i][c.Name]
 		}
+		// Set last so a column that happens to be named "_row" cannot hide
+		// the documented row position.
+		m["_row"] = view.Rows[i].Position
 		res.Rows = append(res.Rows, m)
 	}
 	return res, nil

@@ -24,7 +24,10 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/jdanielnd/crm-cli/internal/column"
 	"github.com/jdanielnd/crm-cli/internal/csvio"
@@ -34,6 +37,7 @@ import (
 	"github.com/jdanielnd/crm-cli/internal/run"
 	"github.com/jdanielnd/crm-cli/internal/service"
 	"github.com/jdanielnd/crm-cli/internal/table"
+	"github.com/jdanielnd/crm-cli/internal/value"
 )
 
 //go:embed static
@@ -66,8 +70,8 @@ func New(db *sql.DB, registry *provider.Registry) *Server {
 func (s *Server) Close() { s.runs.Close() }
 
 // Serve listens on addr until ctx is cancelled (see httpguard.Serve).
-func (s *Server) Serve(ctx context.Context, addr, token string, ready func(net.Addr)) error {
-	return httpguard.Serve(ctx, addr, token, s.Handler, ready)
+func (s *Server) Serve(ctx context.Context, addr, token string, ready func(net.Addr), opts ...httpguard.ServeOption) error {
+	return httpguard.Serve(ctx, addr, token, s.Handler, ready, opts...)
 }
 
 // Handler serves the static page and, behind the bearer token, the API.
@@ -447,6 +451,9 @@ type estimateRequest struct {
 	Columns []string            `json:"columns"`
 	Only    []string            `json:"only"`
 	Preview *service.ColumnSpec `json:"preview"`
+	// WithSources adds the unfilled computed columns Columns read from (see
+	// withSources); the page sets it when a single column is run.
+	WithSources bool `json:"with_sources"`
 }
 
 func (s *Server) estimate(w http.ResponseWriter, r *http.Request) {
@@ -457,6 +464,13 @@ func (s *Server) estimate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts := run.Options{Table: r.PathValue("table"), Columns: req.Columns, Only: req.Only}
+	if req.WithSources && req.Preview == nil {
+		var err error
+		if opts.Columns, err = s.withSources(ctx, opts.Table, opts.Columns, opts.Only); err != nil {
+			fail(w, r, err)
+			return
+		}
+	}
 	if req.Preview != nil {
 		c, err := s.svc.PreviewColumn(ctx, opts.Table, *req.Preview)
 		if err != nil {
@@ -481,6 +495,77 @@ func (s *Server) estimate(w http.ResponseWriter, r *http.Request) {
 		"unbounded": est.Total.Unbounded > 0, "needs_budget": est.Total.Worst > 0 || est.Total.Unbounded > 0})
 }
 
+// formulaRef matches the {{column}} references of a formula expression.
+var formulaRef = regexp.MustCompile(`\{\{\s*(.+?)\s*\}\}`)
+
+// withSources returns names plus, ahead of them in column order, the enrich
+// and ai columns they read from (directly or through a formula) that are
+// empty in some row matching only. The engine only treats a source as a
+// same-run dependency when it is in the same request, so running an ai column
+// alone would render the prompt of a row whose source is not filled yet with
+// an empty value.
+func (s *Server) withSources(ctx context.Context, tbl string, names, only []string) ([]string, error) {
+	_, view, err := s.svc.View(ctx, tbl, only)
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]*column.Column, len(view.Columns))
+	for _, c := range view.Columns {
+		byName[c.Name] = c
+	}
+	want := map[string]bool{}
+	var visit func(name string)
+	visit = func(name string) {
+		c := byName[name]
+		if c == nil || want[name] {
+			return
+		}
+		want[name] = true
+		srcs := c.Sources(view.Columns)
+		if c.Type == column.Formula {
+			for _, m := range formulaRef.FindAllStringSubmatch(c.Config.Expr, -1) {
+				for _, o := range view.Columns {
+					if m[1] == o.Name || strings.HasPrefix(m[1], o.Name+".") {
+						srcs = append(srcs, o.Name)
+					}
+				}
+			}
+		}
+		for _, src := range srcs {
+			visit(src)
+		}
+	}
+	for _, n := range names {
+		visit(n)
+	}
+	unfilled := func(name string) bool {
+		for _, cells := range view.Cells {
+			if strings.TrimSpace(value.Text(cells[name])) == "" {
+				return true
+			}
+		}
+		return false
+	}
+	out := make([]string, 0, len(want))
+	for _, c := range view.Columns {
+		switch {
+		case !want[c.Name]:
+		case slices.Contains(names, c.Name):
+			out = append(out, c.Name)
+		case c.Type.Runnable() && unfilled(c.Name):
+			out = append(out, c.Name)
+		}
+	}
+	// Names the table does not have stay in the request, so the engine
+	// reports them.
+	for _, n := range names {
+		if !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
 // startRequest starts a run of Columns over the rows matching Only. Budget
 // is in USD ("0.50"); it may be empty only when the run cannot spend money.
 type startRequest struct {
@@ -488,6 +573,8 @@ type startRequest struct {
 	Only        []string `json:"only"`
 	Budget      string   `json:"budget"`
 	Concurrency int      `json:"concurrency"`
+	// WithSources: see estimateRequest.
+	WithSources bool `json:"with_sources"`
 }
 
 // startRun creates the run (refused without a budget when it may spend
@@ -511,6 +598,13 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		opts.Budget, opts.BudgetSet = b, true
+	}
+	if req.WithSources {
+		var err error
+		if opts.Columns, err = s.withSources(r.Context(), opts.Table, opts.Columns, opts.Only); err != nil {
+			fail(w, r, err)
+			return
+		}
 	}
 	engine := s.svc.Engine()
 	started, err := engine.Start(r.Context(), opts)

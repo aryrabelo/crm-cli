@@ -366,6 +366,10 @@
     const t = el("table", {}, head, ...est.columns.map((c) => row(c)));
     if (est.columns.length > 1) t.append(row(est.total, "total"));
     const box = el("div", {}, t);
+    if (est.columns.length > 1) {
+      box.append(el("div", { class: "note", text: "Also runs, first and in order, the columns it reads that still have empty cells: " +
+        est.columns.slice(0, -1).map((c) => c.column).join(", ") + "." }));
+    }
     if (est.unbounded) {
       box.append(el("div", { class: "note", text: est.total.unbounded_items +
         " item(s) send a prompt built from a column computed earlier in this run: their price is not known yet (unbounded). The budget still caps the run; items that do not fit are skipped." }));
@@ -384,7 +388,7 @@
     $("run-confirm").disabled = true;
     $("run-dialog").showModal();
     try {
-      const est = await api(tablePath("/estimate"), { method: "POST", json: { columns: [name], only: state.only } });
+      const est = await api(tablePath("/estimate"), { method: "POST", json: { columns: [name], only: state.only, with_sources: true } });
       $("run-estimate").replaceChildren(estimateTable(est));
       const worst = est.total.worst_usd;
       if (est.needs_budget) {
@@ -407,7 +411,7 @@
     const budget = $("run-budget").value.trim();
     $("run-confirm").disabled = true;
     try {
-      const res = await api(tablePath("/runs"), { method: "POST", json: { columns: [state.runColumn], only: state.only, budget } });
+      const res = await api(tablePath("/runs"), { method: "POST", json: { columns: [state.runColumn], only: state.only, budget, with_sources: true } });
       $("run-dialog").close();
       renderRun(res.run);
       state.wasActive = true;

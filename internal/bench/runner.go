@@ -352,11 +352,11 @@ func (e *executor) expand(v any, row map[string]string, last any) (any, error) {
 		return out, nil
 	case string:
 		if m := placeholder.FindStringSubmatchIndex(x); m != nil && m[0] == 0 && m[1] == len(x) {
-			return e.resolve(x[m[2]:m[3]], row, last)
+			return e.resolve(strings.TrimSpace(x[m[2]:m[3]]), row, last)
 		}
 		var firstErr error
 		s := placeholder.ReplaceAllStringFunc(x, func(p string) string {
-			ref := placeholder.FindStringSubmatch(p)[1]
+			ref := strings.TrimSpace(placeholder.FindStringSubmatch(p)[1])
 			val, err := e.resolve(ref, row, last)
 			if err != nil {
 				if firstErr == nil {

@@ -116,6 +116,26 @@ func bind(req gomcp.CallToolRequest, args any) *gomcp.CallToolResult {
 	return nil
 }
 
+// sortedUnion is the documented default order of new columns: the sorted
+// names of every key of every row, so it does not depend on row order.
+func sortedUnion(rows []map[string]any) []string {
+	keys := map[string]struct{}{}
+	for _, r := range rows {
+		for k := range r {
+			keys[k] = struct{}{}
+		}
+	}
+	return slices.Sorted(maps.Keys(keys))
+}
+
+// orSorted is columns, or the sorted union of the row keys when it is empty.
+func orSorted(columns []string, rows []map[string]any) []string {
+	if len(columns) > 0 {
+		return columns
+	}
+	return sortedUnion(rows)
+}
+
 // rowCells converts row objects to cells (value.Text of each JSON value),
 // keys in sorted order; the columns argument of Upsert orders new columns.
 func rowCells(rows []map[string]any) [][]table.Cell {
@@ -197,7 +217,7 @@ func (s *Server) tableImport(ctx context.Context, req gomcp.CallToolRequest) (*g
 		}
 	} else {
 		var err error
-		if res, err = s.svc.UpsertRows(ctx, opts, a.Columns, rowCells(a.Rows), false); err != nil {
+		if res, err = s.svc.UpsertRows(ctx, opts, orSorted(a.Columns, a.Rows), rowCells(a.Rows), false); err != nil {
 			return toolError(err)
 		}
 	}
@@ -215,7 +235,7 @@ func (s *Server) rowsUpsertMany(ctx context.Context, req gomcp.CallToolRequest) 
 	if r := bind(req, &a); r != nil {
 		return r, nil
 	}
-	res, err := s.svc.UpsertRows(ctx, table.ImportOptions{Name: a.Table, Source: mcpSource}, a.Columns, rowCells(a.Rows), true)
+	res, err := s.svc.UpsertRows(ctx, table.ImportOptions{Name: a.Table, Source: mcpSource}, orSorted(a.Columns, a.Rows), rowCells(a.Rows), true)
 	if err != nil {
 		return toolError(err)
 	}

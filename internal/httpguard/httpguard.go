@@ -58,14 +58,27 @@ type Config struct {
 
 // Loopback is the Config of a server listening on the loopback address addr:
 // the Host and Origin allowlists are 127.0.0.1, localhost and [::1] with
-// addr's port.
+// addr's port, plus addr's own IP when it is another loopback address
+// (127.0.0.2).
 func Loopback(token string, addr net.Addr) Config {
 	_, port, err := net.SplitHostPort(addr.String())
 	if err != nil {
 		port = ""
 	}
 	cfg := Config{Token: token}
-	for _, h := range []string{"127.0.0.1", "localhost", "[::1]"} {
+	hosts := []string{"127.0.0.1", "localhost", "[::1]"}
+	if host, _, err := net.SplitHostPort(addr.String()); err == nil {
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			h := ip.String()
+			if ip.To4() == nil {
+				h = "[" + h + "]"
+			}
+			if !slices.Contains(hosts, h) {
+				hosts = append(hosts, h)
+			}
+		}
+	}
+	for _, h := range hosts {
 		cfg.Hosts = append(cfg.Hosts, h+":"+port)
 		cfg.Origins = append(cfg.Origins, "http://"+h+":"+port)
 		if port == "80" {
@@ -114,9 +127,11 @@ func Wrap(cfg Config, next http.Handler) (http.Handler, error) {
 	if cfg.Token == "" {
 		return nil, errors.New("httpguard: a bearer token is required")
 	}
-	want := []byte("Bearer " + cfg.Token)
+	want := []byte(cfg.Token)
 	return guard(cfg, func(w http.ResponseWriter, r *http.Request) bool {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+		// The auth scheme is case-insensitive (RFC 7235); the token is not.
+		scheme, got, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(got)), want) != 1 {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="crm"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return false
@@ -127,8 +142,10 @@ func Wrap(cfg Config, next http.Handler) (http.Handler, error) {
 
 // WrapPublic returns next behind the Host/Origin checks and the body cap of
 // cfg, without the token. It is for responses that hold no data and that a
-// browser must load before it has a token (the static files of a web UI); a
-// page on a rebound or foreign name still cannot load them.
+// browser must load before it has a token (the static files of a web UI). On
+// a loopback bind (Hosts set) a page on a rebound or foreign Host cannot
+// load them; on a non-loopback bind the Host is not checked and only a
+// cross-origin Origin header is refused.
 func WrapPublic(cfg Config, next http.Handler) http.Handler {
 	return guard(cfg, nil, next)
 }
@@ -172,7 +189,20 @@ func originAllowed(allowed []string, r *http.Request) bool {
 		return true
 	}
 	u, err := url.Parse(origin)
-	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && strings.EqualFold(u.Host, r.Host)
+	return err == nil && u.Scheme == requestScheme(r) && strings.EqualFold(u.Host, r.Host)
+}
+
+// requestScheme is the scheme the client used: https on a TLS connection or,
+// when a proxy in front terminated TLS, the X-Forwarded-Proto it set. A
+// browser page cannot forge that header cross-origin (it forces a preflight).
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return "https"
+	}
+	return "http"
 }
 
 // NewServer is an http.Server for h with the package's timeouts.
@@ -189,7 +219,13 @@ func NewServer(h http.Handler) *http.Server {
 // listener's Config (ForListener: loopback Host/Origin allowlists on a
 // loopback bind) until ctx is cancelled, then shuts down gracefully. token
 // is required. ready (optional) receives the bound address once listening.
-func Serve(ctx context.Context, addr, token string, build func(Config) (http.Handler, error), ready func(net.Addr)) error {
+// Without WithTLS the transport is plain HTTP, so the bearer token crosses
+// the network in clear text on a non-loopback bind.
+func Serve(ctx context.Context, addr, token string, build func(Config) (http.Handler, error), ready func(net.Addr), opts ...ServeOption) error {
+	var so serveOptions
+	for _, o := range opts {
+		o(&so)
+	}
 	if token == "" {
 		return errors.New("httpguard: a bearer token is required")
 	}
@@ -197,7 +233,11 @@ func Serve(ctx context.Context, addr, token string, build func(Config) (http.Han
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
-	h, err := build(ForListener(token, ln))
+	cfg := ForListener(token, ln)
+	if so.certFile != "" {
+		cfg = cfg.https()
+	}
+	h, err := build(cfg)
 	if err != nil {
 		_ = ln.Close()
 		return err
@@ -207,16 +247,49 @@ func Serve(ctx context.Context, addr, token string, build func(Config) (http.Han
 		ready(ln.Addr())
 	}
 	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
+	go func() {
+		if so.certFile != "" {
+			errc <- srv.ServeTLS(ln, so.certFile, so.keyFile)
+			return
+		}
+		errc <- srv.Serve(ln)
+	}()
 	select {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdown)
+		if err := srv.Shutdown(shutdown); err != nil {
+			// Graceful shutdown timed out: force-close what is still open
+			// (streamable HTTP responses can outlive any deadline).
+			_ = srv.Close()
+			return err
+		}
+		return nil
 	case err := <-errc:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
 	}
+}
+
+// ServeOption configures Serve.
+type ServeOption func(*serveOptions)
+
+type serveOptions struct{ certFile, keyFile string }
+
+// WithTLS serves HTTPS with the PEM certificate and key files; loopback
+// Origin allowlists become https:// accordingly.
+func WithTLS(certFile, keyFile string) ServeOption {
+	return func(o *serveOptions) { o.certFile, o.keyFile = certFile, keyFile }
+}
+
+// https returns cfg with its allowlisted Origins on the https scheme.
+func (c Config) https() Config {
+	origins := make([]string, len(c.Origins))
+	for i, o := range c.Origins {
+		origins[i] = "https://" + strings.TrimPrefix(o, "http://")
+	}
+	c.Origins = origins
+	return c
 }
