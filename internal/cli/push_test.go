@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,6 +32,9 @@ func TestPush_DedupeByEmailAndFuzzyOrgs(t *testing.T) {
 	assert.Equal(t, "error", rows[3]["action"])
 	out, _, _ = crm(t, dbPath, "person", "list", "-f", "json")
 	assert.Empty(t, jsonRows(t, out))
+	quiet, stderr, code := crm(t, dbPath, "push", "leads", "--to", "person", "--dry-run", "--quiet")
+	require.Equal(t, 0, code, stderr)
+	assert.Empty(t, strings.TrimSpace(quiet), "dry-run --quiet prints no placeholder 0 ids")
 
 	out, stderr, code = crm(t, dbPath, "push", "leads", "--to", "person", "-f", "json")
 	require.Equal(t, 0, code, stderr)
@@ -54,6 +58,21 @@ func TestPush_DedupeByEmailAndFuzzyOrgs(t *testing.T) {
 	assert.Contains(t, stderr, "pushed 3 rows of orgs to org (dedupe fuzz): 1 created, 0 updated, 2 merged, 0 failed")
 }
 
+// Cubic #4381117094: an explicit --threshold 0 is honoured, not replaced by the default.
+func TestPush_ThresholdZeroIsNotTheDefault(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	orgs := writeFile(t, dir, "orgs.csv", "company\nAcme Analytics\nGlobex\n")
+	_, stderr, code := crm(t, dbPath, "table", "import", orgs, "--as", "orgs")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crm(t, dbPath, "push", "orgs", "--to", "org", "--dedupe", "fuzz", "--dry-run")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stderr, "2 created, 0 updated, 0 merged")
+	_, stderr, code = crm(t, dbPath, "push", "orgs", "--to", "org", "--dedupe", "fuzz", "--threshold", "0", "--dry-run")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stderr, "1 created, 0 updated, 1 merged")
+}
+
 func TestPush_UsageErrors(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "crm.db")
@@ -71,6 +90,7 @@ func TestPush_UsageErrors(t *testing.T) {
 		{"email for orgs", []string{"push", "t", "--to", "org", "--dedupe", "email"}, 2, "needs --to person"},
 		{"no email column", []string{"push", "t", "--to", "person"}, 2, "no column of table t maps to email"},
 		{"bad threshold", []string{"push", "t", "--to", "person", "--dedupe", "fuzz", "--threshold", "2"}, 2, "between 0 and 1"},
+		{"nan threshold", []string{"push", "t", "--to", "person", "--dedupe", "fuzz", "--threshold", "NaN"}, 2, "between 0 and 1"},
 		{"missing table", []string{"push", "nope", "--to", "person"}, 3, "not found"},
 	}
 	for _, tc := range cases {

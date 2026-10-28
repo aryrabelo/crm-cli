@@ -36,9 +36,9 @@ var qualifyColumns = []format.ColumnDef{
 
 func qualifyCmd() *cobra.Command {
 	var criteria, name, budget string
-	var only, wf []string
-	var explain, dryRun bool
-	var concurrency, retry int
+	var only, wf, fields []string
+	var explain, dryRun, retryUncertain bool
+	var concurrency, retry, fieldLimit int
 	cmd := &cobra.Command{
 		Use:   "qualify <table> --criteria <file.md>",
 		Short: "Decide yes/no/maybe per row against ICP criteria (llm, with --explain reasons)",
@@ -48,13 +48,19 @@ column --name (default "qualified") with values yes, no or maybe; with
 --explain, also <name>_reason with one or two sentences citing the row fields
 behind each decision.
 
-The prompt is the criteria plus every other column of the row. It runs
+The prompt is the criteria plus the row's fields: by default the input and
+formula columns and the enrich columns that keep one value (--field); ai
+columns, reason columns and raw enrich answers (whole provider JSON) are left
+out. --fields a,b picks them instead (column or column.json.path). Each field
+is cut to --field-limit characters, and the prompt says so. It runs
 through crm run: answers are cached (re-running unchanged rows costs 0), the
 budget is a hard cap (--budget is required when the run may spend money), and
 --dry-run estimates calls and cost without writing anything. Prints the
-decision counts, tokens in/out and cost vs budget.`,
+decision counts, tokens in/out and cost vs budget, and exits like crm run:
+5 when the budget stopped it, 6 with failed rows, 128+n on a signal.`,
 		Example: `  crm qualify leads --criteria files/icp.md --explain --dry-run
   crm qualify leads --criteria files/icp.md --explain --budget 0.50
+  crm qualify leads --criteria files/icp.md --fields company,description,site.title --budget 0.50
   crm table export leads --only "qualified=yes"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -64,8 +70,11 @@ decision counts, tokens in/out and cost vs budget.`,
 			if concurrency < 1 {
 				return model.NewExitError(model.ErrValidation, "--concurrency must be at least 1")
 			}
+			if fieldLimit < 1 {
+				return model.NewExitError(model.ErrValidation, "--field-limit must be at least 1")
+			}
 			opts := service.QualifyOptions{Table: args[0], Name: name, Explain: explain, Only: only, Waterfall: wf,
-				Concurrency: concurrency, Retry: retry, DryRun: dryRun}
+				Fields: fields, FieldLimit: fieldLimit, Concurrency: concurrency, Retry: retry, RetryUncertain: retryUncertain, DryRun: dryRun}
 			if cmd.Flags().Changed("budget") {
 				b, err := provider.ParseUSD(budget)
 				if err != nil {
@@ -104,25 +113,32 @@ decision counts, tokens in/out and cost vs budget.`,
 					fmt.Fprintf(os.Stderr, " with reasons in %s", res.Reason)
 				}
 				fmt.Fprintln(os.Stderr)
-				return printEstimate(res.Estimate, run.Options{Budget: opts.Budget, BudgetSet: opts.BudgetSet})
+				fmt.Fprintf(os.Stderr, "prompt fields: %s (each cut to %d characters)\n", strings.Join(res.Fields, ", "), res.FieldLimit)
+				return printEstimate(res.Estimate, opts.Budget, opts.BudgetSet)
 			}
 			printRunLine(res.Run)
 			r, st := res.Run.Run, res.Run.Run.Stats
 			fmt.Fprintf(os.Stderr, "qualify %s.%s: yes %d · no %d · maybe %d · failed %d · skipped %d — tokens in %d / out %d · spent %s of %s budget\n",
 				res.Table, res.Column, res.Counts["yes"], res.Counts["no"], res.Counts["maybe"], res.Counts[run.ItemFailed],
 				res.Counts[run.ItemSkipped], st.TokensIn, st.TokensOut, r.Spent, r.Budget)
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{service.QualifyData(res)}, qualifyColumns, flagQuiet)
+			if err := format.Output(os.Stdout, resolveFormat(), []map[string]any{service.QualifyData(res)}, qualifyColumns, flagQuiet); err != nil {
+				return err
+			}
+			return runOutcome(res.Run.Run)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&criteria, "criteria", "", "markdown file with the qualification criteria (required)")
-	f.BoolVar(&explain, "explain", false, "also store a 1–2 sentence reason per row in <name>_reason")
+	f.BoolVar(&explain, "explain", false, "also store a short model-written reason per row in <name>_reason")
 	f.StringVar(&name, "name", service.DefaultQualifyColumn, "decision column name")
-	f.StringVar(&budget, "budget", "", "hard spending cap in USD for the run (e.g. 0.50)")
+	f.StringVar(&budget, "budget", "", "spending cap in USD for the run, at the configured token prices (e.g. 0.50; see crm run --help)")
 	f.BoolVar(&dryRun, "dry-run", false, "estimate calls, cost and cache hits; call nothing, write nothing")
 	f.StringArrayVar(&only, "only", nil, onlyHelp+"; only matching rows are qualified")
 	f.StringSliceVar(&wf, "waterfall", []string{"llm"}, "llm providers in order (see crm provider list)")
+	f.StringSliceVar(&fields, "fields", nil, "row fields the prompt shows (column or column.json.path; default: input, formula and enrich --field columns)")
+	f.IntVar(&fieldLimit, "field-limit", service.DefaultQualifyFieldLimit, "cut each field to this many characters")
 	f.IntVar(&concurrency, "concurrency", run.DefaultConcurrency, "rows processed in parallel")
 	f.IntVar(&retry, "retry", run.DefaultRetry, "retries per llm call on 429/5xx/timeouts")
+	f.BoolVar(&retryUncertain, "retry-uncertain", false, "also retry paid llm calls that timed out after the request was sent (may pay twice)")
 	return cmd
 }

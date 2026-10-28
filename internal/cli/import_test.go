@@ -295,3 +295,25 @@ func TestImport_Stdin(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, stderr, "holds organization records, not person")
 }
+
+// Cubic #4380317756: --import is an immutable export of the batch as it was
+// imported, even after a keyed re-import changes the records or one is archived.
+func TestRowsImport_IsASnapshot(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	f := filepath.Join(dir, "a.csv")
+	first := "name,email,Plano\nAna,ana@x.com,free\nBob,bob@x.com,pro\n"
+	require.NoError(t, os.WriteFile(f, []byte(first), 0o644))
+	_, stderr, code := crm(t, dbPath, "import", f, "--as", "person", "--key", "email")
+	require.Equal(t, 0, code, stderr)
+
+	require.NoError(t, os.WriteFile(f, []byte("name,email,Plano\nAna Maria,ana@x.com,pro\n"), 0o644))
+	_, stderr, code = crm(t, dbPath, "import", f, "--as", "person", "--key", "email")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crm(t, dbPath, "person", "delete", "2")
+	require.Equal(t, 0, code, stderr)
+
+	out, stderr, code := crm(t, dbPath, "rows", "person", "--import", "1", "-f", "csv")
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, first, out)
+}

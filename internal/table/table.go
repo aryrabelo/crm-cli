@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jdanielnd/crm-cli/internal/column"
@@ -170,6 +171,9 @@ func (s *Store) AddColumn(ctx context.Context, c *column.Column) error {
 	if err := c.Validate(existing); err != nil {
 		return err
 	}
+	if err := s.purgeArchived(ctx, c.WorkspaceID, c.Name); err != nil {
+		return err
+	}
 	cfg, err := json.Marshal(c.Config)
 	if err != nil {
 		return fmt.Errorf("encode column config: %w", err)
@@ -252,15 +256,81 @@ func (s *Store) RemoveColumn(ctx context.Context, w *Workspace, name string) err
 		if c.Type == column.Enrich && c.Config.From == name {
 			return model.NewExitError(model.ErrConflict, "column %q is the --from of column %q", name, c.Name)
 		}
-		if c.Type == column.Formula || c.Type == column.AI {
-			probe := column.Column{Name: c.Name, Type: c.Type, Config: c.Config}
-			if probe.Validate(withoutColumn(others, c.Name)) != nil {
-				return model.NewExitError(model.ErrConflict, "column %q is used by %s column %q", name, c.Type, c.Name)
-			}
+		if c.Type == column.AI && c.Config.Reason == name {
+			return model.NewExitError(model.ErrConflict, "column %q is the reason column of ai column %q", name, c.Name)
+		}
+		// Resolve against the full column set: "{{company.domain}}" falls
+		// back to the column "company" once "company.domain" is gone, which
+		// would silently change the formula's value instead of failing.
+		if slices.Contains(c.References(cols), name) {
+			return model.NewExitError(model.ErrConflict, "column %q is used by %s column %q", name, c.Type, c.Name)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, "UPDATE workspace_columns SET archived = 1 WHERE id = ?", target.ID); err != nil {
 		return fmt.Errorf("remove column %s: %w", name, err)
+	}
+	return nil
+}
+
+// purgeArchived drops the cell values left in the rows by an archived column
+// of the same name, so a re-added column does not show stale values.
+func (s *Store) purgeArchived(ctx context.Context, workspaceID int64, name string) error {
+	var archived int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM workspace_columns WHERE workspace_id = ? AND name = ? AND archived = 1",
+		workspaceID, name).Scan(&archived); err != nil {
+		return fmt.Errorf("check archived column %s: %w", name, err)
+	}
+	if archived == 0 {
+		return nil
+	}
+	needle, err := json.Marshal(name)
+	if err != nil {
+		return fmt.Errorf("encode column name: %w", err)
+	}
+	// Row data is written with json.Marshal, so the key appears as "name":.
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, data FROM workspace_rows WHERE workspace_id = ? AND instr(data, ?) > 0",
+		workspaceID, string(needle)+":")
+	if err != nil {
+		return fmt.Errorf("find stale cells of %s: %w", name, err)
+	}
+	type stale struct {
+		id   int64
+		data []byte
+	}
+	var todo []stale
+	for rows.Next() {
+		var st stale
+		var data string
+		if err := rows.Scan(&st.id, &data); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan row: %w", err)
+		}
+		cells := map[string]any{}
+		if err := json.Unmarshal([]byte(data), &cells); err != nil {
+			rows.Close()
+			return fmt.Errorf("row %d: decode data: %w", st.id, err)
+		}
+		if _, ok := cells[name]; !ok {
+			continue
+		}
+		delete(cells, name)
+		if st.data, err = json.Marshal(cells); err != nil {
+			rows.Close()
+			return fmt.Errorf("row %d: encode data: %w", st.id, err)
+		}
+		todo = append(todo, st)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate rows: %w", err)
+	}
+	rows.Close()
+	for _, st := range todo {
+		if _, err := s.db.ExecContext(ctx, "UPDATE workspace_rows SET data = ? WHERE id = ?", string(st.data), st.id); err != nil {
+			return fmt.Errorf("purge row %d: %w", st.id, err)
+		}
 	}
 	return nil
 }

@@ -1,8 +1,10 @@
 // Package provider defines the enrichment adapter contract, the provider
 // configuration store and the built-in adapters (exa, jina, github, http).
 //
-// A new provider is one file: a type implementing Adapter plus a case in
-// Registry.Open.
+// Adding a provider kind touches: the adapter file (a type implementing
+// Adapter), Kinds and Settings in config.go, the kind's checks in
+// Config.Validate, a case in Registry.Open (or Registry.OpenLLM), and the
+// crm provider set flags in internal/cli.
 package provider
 
 import (
@@ -41,10 +43,47 @@ func (c Cost) String() string {
 // ParseUSD parses a dollar amount ("2", "0.005", "$1.50") into a Cost.
 func ParseUSD(s string) (Cost, error) {
 	f, err := strconv.ParseFloat(strings.TrimPrefix(strings.TrimSpace(s), "$"), 64)
-	if err != nil || f < 0 || math.IsInf(f, 0) || math.IsNaN(f) {
+	if err != nil {
 		return 0, fmt.Errorf("invalid USD amount %q", s)
 	}
-	return Cost(math.Round(f * 1e6)), nil
+	c, ok := microUSD(f)
+	if !ok {
+		return 0, fmt.Errorf("invalid USD amount %q", s)
+	}
+	return c, nil
+}
+
+// maxCost is the largest representable Cost; sums and products saturate at it.
+const maxCost = Cost(math.MaxInt64)
+
+// microUSD scales a dollar amount to micro-USD. ok is false for negative,
+// non-finite and out-of-range amounts.
+func microUSD(f float64) (c Cost, ok bool) {
+	scaled := math.Round(f * 1e6)
+	// float64(MaxInt64) rounds up to 2^63, which is itself out of range.
+	if math.IsNaN(scaled) || scaled < 0 || scaled >= float64(math.MaxInt64) {
+		return 0, false
+	}
+	return Cost(scaled), true
+}
+
+// mulCost returns n*c, saturating at maxCost. n and c are non-negative.
+func mulCost(n int64, c Cost) Cost {
+	if n <= 0 || c <= 0 {
+		return 0
+	}
+	if int64(c) > math.MaxInt64/n {
+		return maxCost
+	}
+	return Cost(n * int64(c))
+}
+
+// addCost returns a+b, saturating at maxCost. a and b are non-negative.
+func addCost(a, b Cost) Cost {
+	if a > maxCost-b {
+		return maxCost
+	}
+	return a + b
 }
 
 // Hash identifies an input for caching: same hash, same provider → same answer.
@@ -70,6 +109,19 @@ type Adapter interface {
 	Key(in Input) Hash
 }
 
+// InputSized is implemented by adapters whose price grows with the size of
+// the input (llm: prompt tokens). Their Estimate for an input that is not
+// known yet (a column computed earlier in the same run) has no upper bound.
+type InputSized interface {
+	InputSized() bool
+}
+
+// PricedByInputSize reports whether a's estimate grows with the input size.
+func PricedByInputSize(a Adapter) bool {
+	s, ok := a.(InputSized)
+	return ok && s.InputSized()
+}
+
 // Error is a provider failure. Retryable errors (429, 5xx, timeouts, network)
 // may succeed on a later attempt; RetryAfter is the provider's hint, if any.
 type Error struct {
@@ -77,6 +129,14 @@ type Error struct {
 	Retryable  bool
 	RetryAfter time.Duration
 	Msg        string
+	// Sent is set when the request was written but no complete response
+	// came back (timeout, connection reset, cancelled while waiting): the
+	// provider may have processed, and billed, it.
+	Sent bool
+	// Idempotent is set when the request method is safe to repeat (GET,
+	// HEAD, OPTIONS).
+	Idempotent bool
+	cause      error
 }
 
 func (e *Error) Error() string {
@@ -86,6 +146,9 @@ func (e *Error) Error() string {
 	return e.Msg
 }
 
+// Unwrap returns the context error of a call cancelled after it was sent.
+func (e *Error) Unwrap() error { return e.cause }
+
 // Retryable reports whether err is worth another attempt and the delay the
 // provider asked for (0 when it gave none).
 func Retryable(err error) (bool, time.Duration) {
@@ -94,6 +157,16 @@ func Retryable(err error) (bool, time.Duration) {
 		return pe.Retryable, pe.RetryAfter
 	}
 	return false, 0
+}
+
+// Unconfirmed reports whether err is a call that was sent without a
+// confirmed outcome (see Error.Sent), and whether repeating it is safe.
+func Unconfirmed(err error) (sent, idempotent bool) {
+	var pe *Error
+	if errors.As(err, &pe) {
+		return pe.Sent, pe.Idempotent
+	}
+	return false, false
 }
 
 // hashKey derives a cache key from the adapter kind, its answer-shaping

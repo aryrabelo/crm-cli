@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,22 +17,46 @@ const maxResponseBytes = 16 << 20
 // call performs req and classifies the outcome. A 404 is not an error: it
 // returns found=false so adapters can answer "no data" (and still charge).
 // 408, 429 and 5xx are retryable, as are transport failures and timeouts.
+// A failure after the request was written is marked Error.Sent: the provider
+// may have billed it. Error text never carries req's credentials: transport
+// errors embed the request URL and error bodies may echo it (redactRequest).
 func call(ctx context.Context, client *http.Client, req *http.Request) (body []byte, found bool, err error) {
-	resp, err := client.Do(req.WithContext(ctx))
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, false, ctx.Err()
+	var wrote atomic.Bool
+	trace := &httptrace.ClientTrace{WroteRequest: func(i httptrace.WroteRequestInfo) {
+		if i.Err == nil {
+			wrote.Store(true)
 		}
-		return nil, false, &Error{Retryable: true, Msg: err.Error()}
+	}}
+	// unconfirmed is the error of a call that got no complete response.
+	unconfirmed := func(msg string, sent bool) error {
+		e := &Error{Retryable: true, Msg: redactRequest(msg, req), Sent: sent, Idempotent: idempotent(req.Method)}
+		if ctx.Err() != nil {
+			if !sent {
+				return ctx.Err()
+			}
+			e.Retryable, e.cause = false, ctx.Err()
+		}
+		return e
+	}
+
+	if sch := strings.ToLower(req.URL.Scheme); sch != "http" && sch != "https" {
+		// Retrying cannot fix a malformed URL (e.g. a missing scheme).
+		return nil, false, &Error{Msg: redactRequest(fmt.Sprintf("request URL %q must start with http:// or https://", req.URL.String()), req)}
+	}
+
+	resp, err := client.Do(req.WithContext(httptrace.WithClientTrace(ctx, trace)))
+	if err != nil {
+		return nil, false, unconfirmed(err.Error(), wrote.Load())
 	}
 	defer resp.Body.Close()
 
-	body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, false, ctx.Err()
-		}
-		return nil, false, &Error{Retryable: true, Msg: "read response: " + err.Error()}
+		return nil, false, unconfirmed("read response: "+err.Error(), true)
+	}
+	if len(body) > maxResponseBytes {
+		// Served (and possibly billed), but unusable: not retryable.
+		return nil, false, &Error{Status: resp.StatusCode, Msg: "response exceeds 16 MiB"}
 	}
 
 	switch {
@@ -40,7 +66,7 @@ func call(ctx context.Context, client *http.Client, req *http.Request) (body []b
 		return nil, false, nil
 	}
 
-	e := &Error{Status: resp.StatusCode, Msg: snippet(body)}
+	e := &Error{Status: resp.StatusCode, Msg: snippet(redactRequest(string(body), req))}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests,
 		resp.StatusCode == http.StatusRequestTimeout,
@@ -55,8 +81,9 @@ func call(ctx context.Context, client *http.Client, req *http.Request) (body []b
 	return nil, false, e
 }
 
-func snippet(body []byte) string {
-	s := strings.TrimSpace(string(body))
+// snippet shortens an already redacted error body.
+func snippet(s string) string {
+	s = strings.TrimSpace(s)
 	if len(s) > 200 {
 		s = s[:200] + "…"
 	}
@@ -96,5 +123,18 @@ func rateLimitReset(h http.Header) time.Duration {
 // errMissingAuth is returned when a provider requires a credential that is
 // not set; it is not retryable, so a waterfall falls through immediately.
 func errMissingAuth(name, env string) error {
+	if env == "" {
+		return &Error{Msg: name + ": no credential configured (set --auth-env)"}
+	}
 	return &Error{Msg: fmt.Sprintf("%s: environment variable %s is not set", name, env)}
+}
+
+// idempotent reports whether a request with method may be repeated without
+// side effects.
+func idempotent(method string) bool {
+	switch method {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	return false
 }

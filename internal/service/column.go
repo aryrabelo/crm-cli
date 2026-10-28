@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jdanielnd/crm-cli/internal/column"
+	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/jdanielnd/crm-cli/internal/provider"
 	"github.com/jdanielnd/crm-cli/internal/table"
@@ -38,6 +39,40 @@ func ReasonColumn(name string) string { return name + "_reason" }
 // AddColumn declares a column on a table: enrich columns read the table key
 // by default, ai columns default to text answers from the llm provider.
 func (s *Service) AddColumn(ctx context.Context, tableName string, spec ColumnSpec) (*column.Column, error) {
+	c, err := s.buildColumn(ctx, tableName, spec)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.saveColumn(ctx, c, false); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// PreviewColumn builds the column spec declares, exactly as AddColumn would
+// save it, and validates it against the table's columns without saving it:
+// the run.Options.Preview of an estimate made before the column exists.
+func (s *Service) PreviewColumn(ctx context.Context, tableName string, spec ColumnSpec) (*column.Column, error) {
+	c, err := s.buildColumn(ctx, tableName, spec)
+	if err != nil {
+		return nil, err
+	}
+	cols, err := table.NewStore(s.db).Columns(ctx, c.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if r := c.Config.Reason; r != "" && !slices.ContainsFunc(cols, func(o *column.Column) bool { return o.Name == r }) {
+		cols = append(cols, &column.Column{WorkspaceID: c.WorkspaceID, Name: r, Type: column.Input})
+	}
+	if err := c.Validate(cols); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// buildColumn turns spec into the column of table tableName, defaults
+// applied.
+func (s *Service) buildColumn(ctx context.Context, tableName string, spec ColumnSpec) (*column.Column, error) {
 	t, err := column.ParseType(spec.Type)
 	if err != nil {
 		return nil, err
@@ -72,10 +107,20 @@ func (s *Service) AddColumn(ctx context.Context, tableName string, spec ColumnSp
 			c.Config.Reason = ReasonColumn(c.Name)
 		}
 	}
-	if err := s.saveColumn(ctx, c, false); err != nil {
+	if err := checkReasonNotKey(ws, c); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// checkReasonNotKey refuses a reason column that is the table key: filling it
+// would overwrite the imported key values.
+func checkReasonNotKey(ws *table.Workspace, c *column.Column) error {
+	if r := c.Config.Reason; r != "" && ws.KeyColumn != nil && r == *ws.KeyColumn {
+		return model.NewExitError(model.ErrValidation,
+			"reason column %q is the key column of table %s: pick another column name", r, ws.Name)
+	}
+	return nil
 }
 
 // saveColumn adds c (or, with update, redefines the existing column of the
@@ -108,15 +153,9 @@ func (s *Service) saveColumn(ctx context.Context, c *column.Column, update bool)
 			return err
 		}
 		if c.Type.Runnable() {
-			wf, _, err := c.Waterfall(ctx, provider.NewStore(tx), s.registry, waterfall.NewCache(tx))
-			if err != nil {
+			if c.CostEst, err = s.worstCost(ctx, tx, c); err != nil {
 				return err
 			}
-			est, err := wf.Estimate(ctx, provider.Input{Value: c.Config.Prompt}, c.Config.Field, false)
-			if err != nil {
-				return err
-			}
-			c.CostEst = est.Worst
 		}
 		if update {
 			err = ts.UpdateColumn(ctx, c)
@@ -134,6 +173,35 @@ func (s *Service) saveColumn(ctx context.Context, c *column.Column, update bool)
 }
 
 // Definition summarizes a column config in one line.
+// worstCost is the worst-case price of one cell of c at the provider prices
+// stored now.
+func (s *Service) worstCost(ctx context.Context, db repo.DBTX, c *column.Column) (provider.Cost, error) {
+	wf, _, err := c.Waterfall(ctx, provider.NewStore(db), s.registry, waterfall.NewCache(db))
+	if err != nil {
+		return 0, err
+	}
+	est, err := wf.Estimate(ctx, provider.Input{Value: c.Config.Prompt}, c.Config.Field, false)
+	if err != nil {
+		return 0, err
+	}
+	return est.Worst, nil
+}
+
+// RefreshCostEst recomputes CostEst of the runnable columns in place from the
+// current provider prices, which crm provider set may have changed since the
+// column was saved. A column whose providers cannot be opened keeps its
+// stored value.
+func (s *Service) RefreshCostEst(ctx context.Context, cols []*column.Column) {
+	for _, c := range cols {
+		if !c.Type.Runnable() {
+			continue
+		}
+		if cost, err := s.worstCost(ctx, s.db, c); err == nil {
+			c.CostEst = cost
+		}
+	}
+}
+
 func Definition(c *column.Column) string {
 	switch c.Type {
 	case column.Formula:

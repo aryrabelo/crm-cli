@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,7 +35,7 @@ func (g *github) login(in Input) string {
 		v = strings.TrimPrefix(v, p)
 	}
 	v = strings.TrimPrefix(v, "@")
-	if i := strings.IndexByte(v, '/'); i >= 0 {
+	if i := strings.IndexAny(v, "/?#"); i >= 0 {
 		v = v[:i]
 	}
 	return strings.ToLower(v)
@@ -65,6 +66,9 @@ func (g *github) Enrich(ctx context.Context, in Input) (Output, Cost, error) {
 	}
 	if !found {
 		return nullOutput, g.price, nil
+	}
+	if !json.Valid(resp) {
+		return nil, 0, &Error{Msg: "github: response is not JSON"}
 	}
 	return Output(resp), g.price, nil
 }

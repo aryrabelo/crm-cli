@@ -85,16 +85,30 @@ func NormalizeDomain(s string) string {
 	if i := strings.IndexAny(s, "/?#"); i >= 0 {
 		s = s[:i]
 	}
-	if i := strings.LastIndexByte(s, ':'); i >= 0 {
+	if strings.HasPrefix(s, "[") {
+		// Bracketed IPv6 host: keep it whole, drop only an optional ":port".
+		if i := strings.IndexByte(s, ']'); i >= 0 {
+			s = s[:i+1]
+		}
+	} else if i := strings.LastIndexByte(s, ':'); i >= 0 && allDigits(s[i+1:]) {
 		s = s[:i]
 	}
 	s = strings.TrimPrefix(s, "www.")
 	return strings.TrimSuffix(s, ".")
 }
 
+func allDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // legalSuffixes are company-form words dropped from organization names.
 var legalSuffixes = []string{"inc", "incorporated", "llc", "ltd", "ltda", "limited", "corp", "corporation",
-	"co", "company", "gmbh", "plc", "sa", "ag", "me", "eireli", "the"}
+	"co", "company", "gmbh", "plc", "sa", "ag", "me", "eireli"}
 
 // NormalizeName lowercases a name, strips accents and punctuation and, for
 // organizations, company-form words ("Acme, Inc." → "acme").
@@ -111,12 +125,18 @@ func NormalizeName(s string, org bool) string {
 	}
 	words := strings.Fields(b.String())
 	if org {
-		kept := slices.DeleteFunc(slices.Clone(words), func(w string) bool { return slices.Contains(legalSuffixes, w) })
-		if n := len(kept); n >= 2 && kept[n-2] == "s" && kept[n-1] == "a" {
-			kept = kept[:n-2]
-		}
-		if len(kept) > 0 {
-			words = kept
+		// Strip legal-form words only from the end, always keeping a word.
+		for {
+			n := len(words)
+			switch {
+			case n > 1 && slices.Contains(legalSuffixes, words[n-1]) && (n != 2 || words[0] != "the"):
+				words = words[:n-1]
+				continue
+			case n > 2 && words[n-2] == "s" && words[n-1] == "a":
+				words = words[:n-2]
+				continue
+			}
+			break
 		}
 	}
 	return strings.Join(words, " ")

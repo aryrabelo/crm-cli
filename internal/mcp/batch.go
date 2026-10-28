@@ -9,7 +9,6 @@ import (
 	"maps"
 	"slices"
 	"strconv"
-	"sync"
 
 	"github.com/invopop/jsonschema"
 	"github.com/jdanielnd/crm-cli/internal/csvio"
@@ -31,7 +30,9 @@ const mcpSource = "mcp"
 func (s *Server) registerBatchTools() {
 	s.mcp.AddTool(gomcp.NewTool("crm_table_import",
 		gomcp.WithDescription("Create or append to a table from CSV text or an array of row objects, in one call. "+
-			"With a key column, rows whose key exists are updated. Invalid rows are reported per item; the others are written."),
+			"With a key column, rows whose key exists are updated. A header error (empty or repeated header, key column "+
+			"missing from the header) fails the whole call and writes nothing; a row error (empty or repeated key) is "+
+			"reported in that row's result and the other rows are written."),
 		gomcp.WithInputSchema[importArgs]()), s.tableImport)
 	s.mcp.AddTool(gomcp.NewTool("crm_rows_upsert_many",
 		gomcp.WithDescription("Upsert many rows into an existing table: each row object sets only the cells it names; "+
@@ -115,6 +116,26 @@ func bind(req gomcp.CallToolRequest, args any) *gomcp.CallToolResult {
 	return nil
 }
 
+// sortedUnion is the documented default order of new columns: the sorted
+// names of every key of every row, so it does not depend on row order.
+func sortedUnion(rows []map[string]any) []string {
+	keys := map[string]struct{}{}
+	for _, r := range rows {
+		for k := range r {
+			keys[k] = struct{}{}
+		}
+	}
+	return slices.Sorted(maps.Keys(keys))
+}
+
+// orSorted is columns, or the sorted union of the row keys when it is empty.
+func orSorted(columns []string, rows []map[string]any) []string {
+	if len(columns) > 0 {
+		return columns
+	}
+	return sortedUnion(rows)
+}
+
 // rowCells converts row objects to cells (value.Text of each JSON value),
 // keys in sorted order; the columns argument of Upsert orders new columns.
 func rowCells(rows []map[string]any) [][]table.Cell {
@@ -182,24 +203,23 @@ func (s *Server) tableImport(ctx context.Context, req gomcp.CallToolRequest) (*g
 	if (a.CSV == "") == (a.Rows == nil) {
 		return gomcp.NewToolResultError("give exactly one of csv or rows"), nil
 	}
-	columns, rows := a.Columns, rowCells(a.Rows)
+	opts := table.ImportOptions{Name: a.Table, Key: a.Key, Source: mcpSource}
+	var res *table.ImportResult
 	if a.CSV != "" {
 		t, err := csvio.Parse([]byte(a.CSV))
 		if err != nil {
 			return gomcp.NewToolResultError("invalid csv: " + err.Error()), nil
 		}
-		columns, rows = t.Header, make([][]table.Cell, len(t.Rows))
-		for i, rec := range t.Rows {
-			cells := make([]table.Cell, len(t.Header))
-			for j, h := range t.Header {
-				cells[j] = table.Cell{Column: h, Value: rec[j]}
-			}
-			rows[i] = cells
+		// The same service call as `crm table import`, so both behave alike.
+		res, err = s.svc.ImportCSV(ctx, opts, t)
+		if err != nil {
+			return toolError(err)
 		}
-	}
-	res, err := s.svc.UpsertRows(ctx, table.ImportOptions{Name: a.Table, Key: a.Key, Source: mcpSource}, columns, rows, false)
-	if err != nil {
-		return toolError(err)
+	} else {
+		var err error
+		if res, err = s.svc.UpsertRows(ctx, opts, orSorted(a.Columns, a.Rows), rowCells(a.Rows), false); err != nil {
+			return toolError(err)
+		}
 	}
 	return jsonResult(importData(res))
 }
@@ -215,7 +235,7 @@ func (s *Server) rowsUpsertMany(ctx context.Context, req gomcp.CallToolRequest) 
 	if r := bind(req, &a); r != nil {
 		return r, nil
 	}
-	res, err := s.svc.UpsertRows(ctx, table.ImportOptions{Name: a.Table, Source: mcpSource}, a.Columns, rowCells(a.Rows), true)
+	res, err := s.svc.UpsertRows(ctx, table.ImportOptions{Name: a.Table, Source: mcpSource}, orSorted(a.Columns, a.Rows), rowCells(a.Rows), true)
 	if err != nil {
 		return toolError(err)
 	}
@@ -285,6 +305,8 @@ type runStartArgs struct {
 	Wait        *bool    `json:"wait,omitempty" jsonschema_description:"Wait for the run to finish (default true); false returns the run id at once"`
 	Concurrency int      `json:"concurrency,omitempty" jsonschema_description:"Rows processed in parallel (default 4)"`
 	Retry       *int     `json:"retry,omitempty" jsonschema_description:"Retries per provider call on 429/5xx/timeouts (default 2)"`
+	// RetryUncertain: see run.Options.RetryUncertain.
+	RetryUncertain bool `json:"retry_uncertain,omitempty" jsonschema_description:"Also retry paid POST calls that timed out after the request was sent (may pay twice; default false)"`
 }
 
 func estimateData(est *run.Estimate) map[string]any {
@@ -300,7 +322,8 @@ func (s *Server) runStart(ctx context.Context, req gomcp.CallToolRequest) (*gomc
 	if r := bind(req, &a); r != nil {
 		return r, nil
 	}
-	opts := run.Options{Table: a.Table, Columns: a.Columns, Only: a.Filters, Concurrency: a.Concurrency, Retry: retryOr(a.Retry)}
+	opts := run.Options{Table: a.Table, Columns: a.Columns, Only: a.Filters, Concurrency: a.Concurrency, Retry: retryOr(a.Retry),
+		RetryUncertain: a.RetryUncertain}
 	opts.Budget, opts.BudgetSet = budgetOpts(a.Budget)
 	engine := s.svc.Engine()
 	if a.DryRun {
@@ -322,7 +345,7 @@ func (s *Server) runStart(ctx context.Context, req gomcp.CallToolRequest) (*gomc
 		return toolError(err)
 	}
 	opts.Resume, opts.Only = r.ID, nil
-	s.runs.start(r.ID, func(bg context.Context) error {
+	s.runs.Start(r.ID, func(bg context.Context) error {
 		_, err := engine.Execute(bg, opts)
 		return err
 	})
@@ -355,7 +378,11 @@ func (s *Server) runStatus(ctx context.Context, req gomcp.CallToolRequest) (*gom
 	for i, id := range a.RunIDs {
 		res := &results[i]
 		res.RunID = id
-		res.Active, res.Error = s.runs.state(id)
+		var runErr error
+		res.Active, runErr = s.runs.State(id)
+		if runErr != nil {
+			res.Error = errText(runErr)
+		}
 		r, err := s.svc.RunStatus(ctx, id)
 		if err != nil {
 			res.Error = errText(err)
@@ -384,10 +411,14 @@ type qualifyArgs struct {
 	Explain     bool     `json:"explain,omitempty" jsonschema_description:"Also store a reason per row in <name>_reason"`
 	Filters     []string `json:"filters,omitempty" jsonschema_description:"Only qualify rows matching every filter expression"`
 	Waterfall   []string `json:"waterfall,omitempty" jsonschema_description:"llm providers in order (default llm)"`
+	Fields      []string `json:"fields,omitempty" jsonschema_description:"Columns (or column.json.path) the prompt shows per row. Default: input and formula columns plus enrich columns with a field path; ai, reason and raw enrich columns are left out"`
+	FieldLimit  int      `json:"field_limit,omitempty" jsonschema_description:"Cut each field value to this many characters (default 1000)"`
 	Budget      *usd     `json:"budget,omitempty"`
 	DryRun      bool     `json:"dry_run,omitempty"`
 	Concurrency int      `json:"concurrency,omitempty"`
 	Retry       *int     `json:"retry,omitempty"`
+	// RetryUncertain: see run.Options.RetryUncertain.
+	RetryUncertain bool `json:"retry_uncertain,omitempty" jsonschema_description:"Also retry paid llm calls that timed out after the request was sent (may pay twice; default false)"`
 }
 
 func (s *Server) qualify(ctx context.Context, req gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
@@ -396,7 +427,8 @@ func (s *Server) qualify(ctx context.Context, req gomcp.CallToolRequest) (*gomcp
 		return r, nil
 	}
 	opts := service.QualifyOptions{Table: a.Table, Criteria: a.Criteria, Name: a.Name, Explain: a.Explain, Only: a.Filters,
-		Waterfall: a.Waterfall, Concurrency: a.Concurrency, Retry: retryOr(a.Retry), DryRun: a.DryRun}
+		Waterfall: a.Waterfall, Fields: a.Fields, FieldLimit: a.FieldLimit, Concurrency: a.Concurrency, Retry: retryOr(a.Retry),
+		RetryUncertain: a.RetryUncertain, DryRun: a.DryRun}
 	opts.Budget, opts.BudgetSet = budgetOpts(a.Budget)
 	res, err := s.svc.Qualify(ctx, opts)
 	if err != nil {
@@ -404,7 +436,7 @@ func (s *Server) qualify(ctx context.Context, req gomcp.CallToolRequest) (*gomcp
 	}
 	if res.Estimate != nil {
 		out := estimateData(res.Estimate)
-		out["column"], out["redefine"] = res.Column, res.Redefine
+		out["column"], out["redefine"], out["fields"], out["field_limit"] = res.Column, res.Redefine, res.Fields, res.FieldLimit
 		return jsonResult(out)
 	}
 	return jsonResult(service.QualifyData(res))
@@ -446,7 +478,7 @@ type pushArgs struct {
 	Dedupe    string   `json:"dedupe,omitempty" jsonschema:"enum=email,enum=domain,enum=fuzz" jsonschema_description:"email (people, default), domain (orgs, default) or fuzz (similar names)"`
 	Filters   []string `json:"filters,omitempty" jsonschema_description:"Only push rows matching every filter expression"`
 	Map       []string `json:"map,omitempty" jsonschema_description:"column=field overrides, as crm import --map"`
-	Threshold float64  `json:"threshold,omitempty" jsonschema_description:"Fuzz name similarity cut-off 0-1 (default 0.88)"`
+	Threshold *float64 `json:"threshold,omitempty" jsonschema_description:"Fuzz name similarity cut-off 0-1 (default 0.88)"`
 	DryRun    bool     `json:"dry_run,omitempty" jsonschema_description:"Report creates/updates/merges; write nothing"`
 }
 
@@ -461,50 +493,6 @@ func (s *Server) pushDedupe(ctx context.Context, req gomcp.CallToolRequest) (*go
 		return toolError(err)
 	}
 	return jsonResult(res)
-}
-
-// runTracker owns the runs started with wait=false: they execute on a
-// context that Close cancels (leaving them interrupted and resumable).
-type runTracker struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mu     sync.Mutex
-	active map[int64]bool
-	errs   map[int64]string
-}
-
-func newRunTracker() *runTracker {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &runTracker{ctx: ctx, cancel: cancel, active: map[int64]bool{}, errs: map[int64]string{}}
-}
-
-func (t *runTracker) start(id int64, fn func(context.Context) error) {
-	t.mu.Lock()
-	t.active[id] = true
-	t.mu.Unlock()
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
-		err := fn(t.ctx)
-		t.mu.Lock()
-		defer t.mu.Unlock()
-		delete(t.active, id)
-		if err != nil {
-			t.errs[id] = errText(err)
-		}
-	}()
-}
-
-func (t *runTracker) state(id int64) (active bool, errMsg string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.active[id], t.errs[id]
-}
-
-func (t *runTracker) close() {
-	t.cancel()
-	t.wg.Wait()
 }
 
 // errText is the client-facing message of err: the message of a not found,

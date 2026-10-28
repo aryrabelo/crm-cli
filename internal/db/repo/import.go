@@ -70,11 +70,16 @@ func (r *ImportRepo) CreateBatch(ctx context.Context, b *model.ImportBatch) erro
 	return nil
 }
 
-// AddRow records that the data row at position (1-based) landed on entityID.
-func (r *ImportRepo) AddRow(ctx context.Context, batchID int64, position int, entityID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		"INSERT INTO import_rows (batch_id, position, entity_id) VALUES (?, ?, ?)",
-		batchID, position, entityID)
+// AddRow records that the data row at position (1-based) landed on entityID,
+// with the CSV cells it was imported from (one per batch column).
+func (r *ImportRepo) AddRow(ctx context.Context, batchID int64, position int, entityID int64, cells []string) error {
+	enc, err := json.Marshal(cells)
+	if err != nil {
+		return fmt.Errorf("encode import row %d: %w", position, err)
+	}
+	_, err = r.db.ExecContext(ctx,
+		"INSERT INTO import_rows (batch_id, position, entity_id, cells) VALUES (?, ?, ?, ?)",
+		batchID, position, entityID, string(enc))
 	if err != nil {
 		return fmt.Errorf("insert import row %d: %w", position, err)
 	}
@@ -219,6 +224,34 @@ func (r *ImportRepo) ListEntityRows(ctx context.Context, entityType string) ([]*
 	keys, err := r.attachCustom(ctx, entityType, rows,
 		"SELECT entity_id, field_name, field_value FROM custom_fields WHERE entity_type = ? ORDER BY id", entityType)
 	return rows, keys, err
+}
+
+// BatchRecords returns the rows of an import batch in original order with the
+// cells each was imported from. They do not change when the entity is edited,
+// re-imported or archived. Cells is nil for a batch imported before cells were
+// recorded: read those with BatchRows.
+func (r *ImportRepo) BatchRecords(ctx context.Context, b *model.ImportBatch) ([]*model.BatchRecord, error) {
+	rs, err := r.db.QueryContext(ctx,
+		"SELECT entity_id, cells FROM import_rows WHERE batch_id = ? ORDER BY position", b.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list import batch %d rows: %w", b.ID, err)
+	}
+	defer rs.Close()
+	var out []*model.BatchRecord
+	for rs.Next() {
+		var rec model.BatchRecord
+		var cells sql.NullString
+		if err := rs.Scan(&rec.EntityID, &cells); err != nil {
+			return nil, fmt.Errorf("scan import batch %d row: %w", b.ID, err)
+		}
+		if cells.Valid {
+			if err := json.Unmarshal([]byte(cells.String), &rec.Cells); err != nil {
+				return nil, fmt.Errorf("decode import batch %d row cells: %w", b.ID, err)
+			}
+		}
+		out = append(out, &rec)
+	}
+	return out, rs.Err()
 }
 
 // BatchRows returns the entities of an import batch in original row order.

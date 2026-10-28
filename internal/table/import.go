@@ -55,8 +55,15 @@ type ImportResult struct {
 // Import loads a parsed CSV into a table, creating the table on first import.
 // Rows are appended in file order; with a key, a row whose key already exists
 // updates that row's cells instead (computed cells are kept). Headers that are
-// not columns yet become input columns. Any invalid row fails the whole
-// import. Run it inside a transaction.
+// not columns yet become input columns.
+//
+// Errors follow one rule, the same for `crm table import` and the MCP
+// crm_table_import csv input: a header-level error (an empty or repeated
+// header, the table key missing from the header, a --key that does not match
+// the table's) fails the whole import and writes nothing; a row-level error
+// (an empty key cell, a key repeated in the file) is reported in that row's
+// RowResult and the row is skipped, while the other rows are written. Run it
+// inside a transaction.
 func (s *Store) Import(ctx context.Context, opts ImportOptions, t *csvio.Table) (*ImportResult, error) {
 	for i, h := range t.Header {
 		if h == "" {
@@ -81,16 +88,7 @@ func (s *Store) Import(ctx context.Context, opts ImportOptions, t *csvio.Table) 
 		}
 		rows[i] = cells
 	}
-	res, err := s.upsert(ctx, ws, opts.Source, t.Header, rows)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range res.Results {
-		if r.Err != nil {
-			return nil, r.Err
-		}
-	}
-	return res, nil
+	return s.upsert(ctx, ws, opts.Source, t.Header, rows)
 }
 
 // Upsert writes rows of named cells into a table, creating it on first use.
@@ -234,6 +232,12 @@ func (s *Store) upsert(ctx context.Context, ws *Workspace, src string, columns [
 			data = prev.Data
 		}
 		for _, c := range cells {
+			// A re-import updates input cells only: a header that names an
+			// enrich, ai or formula column must not overwrite its computed
+			// cells.
+			if prev != nil && slices.ContainsFunc(cols, func(o *column.Column) bool { return o.Name == c.Column && o.Type != column.Input }) {
+				continue
+			}
 			data[c.Column] = c.Value
 		}
 		enc, err := json.Marshal(data)

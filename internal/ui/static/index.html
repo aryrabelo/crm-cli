@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>crm ui</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="vendor/tabulator.min.css">
+  <link rel="stylesheet" href="app.css">
+  <script src="vendor/tabulator.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="bar">
+    <strong class="brand">crm</strong>
+    <select id="table-select" aria-label="Table"></select>
+    <form id="filter-form" class="filter">
+      <input id="filter" type="text" spellcheck="false" autocomplete="off"
+             placeholder="filter rows, e.g. fit>=70; company!=" aria-label="Row filter (crm --only syntax, ; between conditions)">
+      <button type="submit">Filter</button>
+    </form>
+    <span class="spacer"></span>
+    <span id="row-count" class="muted"></span>
+    <button id="add-column" type="button">+ Add column</button>
+    <button id="import" type="button">Import CSV</button>
+    <input id="import-file" type="file" accept=".csv,text/csv" hidden>
+    <button id="export" type="button">Export CSV</button>
+  </header>
+
+  <section id="run-summary" class="summary" hidden>
+    <div class="summary-line">
+      <span id="run-title" class="run-title"></span>
+      <span id="run-counts" class="muted"></span>
+      <span class="spacer"></span>
+      <span id="run-money"></span>
+      <button id="run-cancel" type="button" hidden>Cancel run</button>
+    </div>
+    <div class="progress"><div id="run-progress"></div></div>
+    <div id="run-error" class="error-text" hidden></div>
+  </section>
+
+  <main id="grid-wrap">
+    <div id="grid"></div>
+    <div id="empty" class="no-tables" hidden>
+      <p>No tables yet.</p>
+      <p class="muted">Import a CSV (button above, or drop a file anywhere on the page).</p>
+    </div>
+  </main>
+
+  <div id="drop" class="drop" hidden><div>Drop a CSV to import</div></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <dialog id="token-dialog">
+    <form method="dialog" id="token-form">
+      <h2>Session token</h2>
+      <p class="muted">Open the URL printed by <code>crm ui</code> (it carries the token), or paste the token here.</p>
+      <input id="token-input" type="password" autocomplete="off" aria-label="Token" required>
+      <menu><button type="submit" class="primary">Connect</button></menu>
+    </form>
+  </dialog>
+
+  <dialog id="import-dialog">
+    <form method="dialog" id="import-form">
+      <h2>Import CSV</h2>
+      <p id="import-file-name" class="muted"></p>
+      <label>Table <input id="import-as" type="text" required pattern="[A-Za-z0-9][A-Za-z0-9_.\-]*" spellcheck="false"></label>
+      <label>Key column <select id="import-key"></select></label>
+      <p class="muted small">With a key, rows whose key already exists are updated instead of duplicated. The key is fixed on the first import.</p>
+      <p id="import-error" class="error-text" hidden></p>
+      <menu>
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary">Import</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="column-dialog">
+    <form method="dialog" id="column-form">
+      <h2>Add column</h2>
+      <div class="grid2">
+        <label>Name <input id="col-name" type="text" required spellcheck="false"></label>
+        <label>Type
+          <select id="col-type">
+            <option value="enrich">enrich (provider waterfall)</option>
+            <option value="ai">ai (llm prompt)</option>
+            <option value="formula">formula</option>
+            <option value="input">input</option>
+          </select>
+        </label>
+      </div>
+      <div data-for="enrich ai">
+        <label>Waterfall <input id="col-waterfall" type="text" spellcheck="false" placeholder="provider1, provider2 (ai: default llm)"></label>
+      </div>
+      <div class="grid2" data-for="enrich">
+        <label>From column <select id="col-from"></select></label>
+        <label>Field <input id="col-field" type="text" spellcheck="false" placeholder="dotted path in the answer, e.g. company.name"></label>
+      </div>
+      <div data-for="formula">
+        <label>Expression <input id="col-expr" type="text" spellcheck="false" placeholder="{{first}} {{last}}"></label>
+      </div>
+      <div data-for="ai">
+        <label>Prompt <textarea id="col-prompt" rows="4" placeholder="Is {{company}} a B2B company? Description: {{description}}"></textarea></label>
+        <div class="grid2">
+          <label>Output <input id="col-output" type="text" spellcheck="false" placeholder="text | score:0-100 | enum:a|b|c | bool"></label>
+          <label class="check"><input id="col-explain" type="checkbox"> Store a reason (<code>&lt;name&gt;_reason</code>)</label>
+        </div>
+      </div>
+      <div id="col-estimate" class="estimate" hidden></div>
+      <p id="col-error" class="error-text" hidden></p>
+      <menu>
+        <button type="button" data-close>Cancel</button>
+        <button type="button" id="col-estimate-btn" data-for="enrich ai">Estimate</button>
+        <button type="submit" class="primary">Add column</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="run-dialog">
+    <form method="dialog" id="run-form">
+      <h2 id="run-dialog-title">Run column</h2>
+      <p id="run-scope" class="muted"></p>
+      <div id="run-estimate" class="estimate"></div>
+      <label>Budget (USD) <input id="run-budget" type="text" inputmode="decimal" autocomplete="off"></label>
+      <p id="run-budget-hint" class="muted small"></p>
+      <p id="run-error-msg" class="error-text" hidden></p>
+      <menu>
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary" id="run-confirm">Run</button>
+      </menu>
+    </form>
+  </dialog>
+</body>
+</html>

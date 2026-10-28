@@ -14,8 +14,11 @@ import (
 	"github.com/jdanielnd/crm-cli/internal/table"
 )
 
-// ImportCSV imports a parsed CSV into a table in one transaction: every row
-// is written, or none (see table.Store.Import).
+// ImportCSV imports a parsed CSV into a table in one transaction. It is the
+// one import path of `crm table import` and the crm_table_import csv input:
+// a header-level error fails the whole import (nothing written); a row-level
+// error is reported in that row's RowResult and the other rows are written
+// (see table.Store.Import).
 func (s *Service) ImportCSV(ctx context.Context, opts table.ImportOptions, t *csvio.Table) (*table.ImportResult, error) {
 	if err := table.ValidateName(opts.Name); err != nil {
 		return nil, err
@@ -50,6 +53,11 @@ func (s *Service) UpsertRows(ctx context.Context, opts table.ImportOptions, colu
 		return err
 	})
 	return res, err
+}
+
+// Tables lists every table with its row and column counts.
+func (s *Service) Tables(ctx context.Context) ([]*table.Summary, error) {
+	return table.NewStore(s.db).ListWorkspaces(ctx)
 }
 
 // View returns the rows of table name that match every only filter, with
@@ -124,10 +132,12 @@ func (s *Service) Query(ctx context.Context, opts QueryOptions) (*QueryResult, e
 	end := min(opts.Offset+opts.Limit, len(view.Rows))
 	for i := opts.Offset; i < end; i++ {
 		m := make(map[string]any, len(view.Columns)+1)
-		m["_row"] = view.Rows[i].Position
 		for _, c := range view.Columns {
 			m[c.Name] = view.Cells[i][c.Name]
 		}
+		// Set last so a column that happens to be named "_row" cannot hide
+		// the documented row position.
+		m["_row"] = view.Rows[i].Position
 		res.Rows = append(res.Rows, m)
 	}
 	return res, nil

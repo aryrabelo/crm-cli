@@ -30,6 +30,7 @@ var benchCompareColumns = []format.ColumnDef{
 	{Header: "Batch Calls", Field: "batch_calls"},
 	{Header: "Per-Entity Calls", Field: "per_entity_calls"},
 	{Header: "Gap", Field: "gap"},
+	{Header: "Batch Provider Calls", Field: "batch_provider_calls"},
 	{Header: "Batch Tokens", Field: "batch_tokens"},
 	{Header: "Batch Cost", Field: "batch_cost"},
 	{Header: "Batch Wall", Field: "batch_wall"},
@@ -181,7 +182,7 @@ func benchRows(results []*bench.Result) []map[string]any {
 // the totals only add tasks possible in both modes.
 func benchCompareRows(batch, perEntity []*bench.Result) []map[string]any {
 	data := make([]map[string]any, 0, len(batch)+1)
-	var bCalls, pCalls, bBytes, pBytes, both int
+	var bCalls, pCalls, bPCalls, bBytes, pBytes, both int
 	var bWall, pWall time.Duration
 	var bCost provider.Cost
 	var bTokens int64
@@ -207,14 +208,14 @@ func benchCompareRows(batch, perEntity []*bench.Result) []map[string]any {
 			both++
 		}
 		bCost += b.Cost
+		bPCalls += b.ProviderCalls
 		bTokens += b.TokensIn + b.TokensOut
 		data = append(data, row)
 	}
 	return append(data, map[string]any{
 		"task": fmt.Sprintf("TOTAL (calls/wall/KB: %d tasks in both modes)", both), "batch_calls": bCalls, "per_entity_calls": pCalls,
 		"gap": fmt.Sprintf("%.1fx", bench.Ratio(pCalls, bCalls)), "batch_cost": bCost.String(), "batch_cost_usd": bCost.USD(),
-		"batch_tokens": bTokens,
-		"batch_wall": wallText(bWall), "per_entity_wall": wallText(pWall), "batch_kb": kb(bBytes), "per_entity_kb": kb(pBytes),
-		"batch_check": "", "per_entity_check": "", "per_entity_na": "",
+		"batch_tokens": bTokens, "batch_provider_calls": bPCalls, "batch_wall": wallText(bWall), "per_entity_wall": wallText(pWall), "batch_kb": kb(bBytes),
+		"per_entity_kb": kb(pBytes), "batch_check": "", "per_entity_check": "", "per_entity_na": "",
 	})
 }

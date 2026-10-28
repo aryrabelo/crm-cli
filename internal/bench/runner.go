@@ -16,6 +16,7 @@ import (
 
 	"github.com/jdanielnd/crm-cli/internal/csvio"
 	"github.com/jdanielnd/crm-cli/internal/db"
+	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	"github.com/jdanielnd/crm-cli/internal/importer"
 	crmmcp "github.com/jdanielnd/crm-cli/internal/mcp"
 	"github.com/jdanielnd/crm-cli/internal/provider"
@@ -136,7 +137,14 @@ func (r *Runner) connect(ctx context.Context, srv *crmmcp.Server) (*client.Clien
 	var err error
 	switch r.Transport {
 	case HTTP:
-		hs := httptest.NewServer(srv.Handler(httpToken))
+		hs := httptest.NewUnstartedServer(nil)
+		h, herr := srv.Handler(httpguard.Loopback(httpToken, hs.Listener.Addr()))
+		if herr != nil {
+			hs.Close()
+			return nil, nil, herr
+		}
+		hs.Config.Handler = h
+		hs.Start()
 		stop = hs.Close
 		c, err = client.NewStreamableHttpClient(hs.URL+crmmcp.HTTPPath,
 			transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer " + httpToken}))
@@ -174,8 +182,16 @@ func setup(ctx context.Context, d *sql.DB, t *Task, m Mode) error {
 		if err != nil {
 			return err
 		}
-		_, err = service.New(d, nil).ImportCSV(ctx, table.ImportOptions{Name: s.Name, Key: s.Key, Source: s.CSV}, parsed)
-		return err
+		res, err := service.New(d, nil).ImportCSV(ctx, table.ImportOptions{Name: s.Name, Key: s.Key, Source: s.CSV}, parsed)
+		if err != nil {
+			return err
+		}
+		for _, r := range res.Results {
+			if r.Err != nil {
+				return fmt.Errorf("setup %s: %w", s.CSV, r.Err)
+			}
+		}
+		return nil
 	default:
 		s := t.Setup.Entities
 		if s == nil {
@@ -336,11 +352,11 @@ func (e *executor) expand(v any, row map[string]string, last any) (any, error) {
 		return out, nil
 	case string:
 		if m := placeholder.FindStringSubmatchIndex(x); m != nil && m[0] == 0 && m[1] == len(x) {
-			return e.resolve(x[m[2]:m[3]], row, last)
+			return e.resolve(strings.TrimSpace(x[m[2]:m[3]]), row, last)
 		}
 		var firstErr error
 		s := placeholder.ReplaceAllStringFunc(x, func(p string) string {
-			ref := placeholder.FindStringSubmatch(p)[1]
+			ref := strings.TrimSpace(placeholder.FindStringSubmatch(p)[1])
 			val, err := e.resolve(ref, row, last)
 			if err != nil {
 				if firstErr == nil {

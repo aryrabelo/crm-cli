@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 
@@ -44,8 +45,8 @@ type PushOptions struct {
 	Only []string
 	// Maps holds column=field overrides, as in crm import --map.
 	Maps []string
-	// Threshold is the fuzz similarity cut-off (default DefaultFuzzThreshold).
-	Threshold float64
+	// Threshold is the fuzz similarity cut-off, 0 included (nil: DefaultFuzzThreshold).
+	Threshold *float64
 	// DryRun reports what would happen and writes nothing.
 	DryRun bool
 }
@@ -122,10 +123,11 @@ func (s *Service) Push(ctx context.Context, opts PushOptions) (*PushResult, erro
 	case opts.Dedupe != DedupeEmail && opts.Dedupe != DedupeDomain && opts.Dedupe != DedupeFuzz:
 		return nil, model.NewExitError(model.ErrValidation, "--dedupe must be email, domain or fuzz, not %q", opts.Dedupe)
 	}
-	if opts.Threshold == 0 {
-		opts.Threshold = DefaultFuzzThreshold
+	threshold := DefaultFuzzThreshold
+	if opts.Threshold != nil {
+		threshold = *opts.Threshold
 	}
-	if opts.Threshold < 0 || opts.Threshold > 1 {
+	if math.IsNaN(threshold) || threshold < 0 || threshold > 1 {
 		return nil, model.NewExitError(model.ErrValidation, "--threshold must be between 0 and 1")
 	}
 
@@ -155,7 +157,7 @@ func (s *Service) Push(ctx context.Context, opts PushOptions) (*PushResult, erro
 	if err != nil {
 		return nil, err
 	}
-	idx := &dedupeIndex{mode: opts.Dedupe, entity: entity, threshold: opts.Threshold, byKey: map[string]*pushed{}}
+	idx := &dedupeIndex{mode: opts.Dedupe, entity: entity, threshold: threshold, byKey: map[string]*pushed{}}
 	for _, e := range existing {
 		custom := e.Custom
 		if custom == nil {

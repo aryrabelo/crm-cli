@@ -216,6 +216,26 @@ func TestRun_EndToEnd(t *testing.T) {
 	assert.Contains(t, stderr, "--budget")
 }
 
+// Cubic #4380602190: the estimated cost per row follows the current provider
+// prices, not the ones in force when the column was added.
+func TestColumnList_CostFollowsProviderPrice(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	path := writeFile(t, dir, "gh.csv", "login\noctocat\n")
+	_, stderr, code := crm(t, dbPath, "table", "import", path, "--as", "gh", "--key", "login")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crm(t, dbPath, "column", "add", "gh", "profile", "--type", "enrich", "--waterfall", "github,exa")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crm(t, dbPath, "provider", "set", "exa", "--price", "0.02")
+	require.Equal(t, 0, code, stderr)
+
+	out, _, code := crm(t, dbPath, "column", "list", "gh", "-f", "json")
+	require.Equal(t, 0, code)
+	cols := jsonRows(t, out)
+	require.Len(t, cols, 2)
+	assert.Equal(t, "$0.02", cols[1]["cost_est"])
+}
+
 func TestProvider_SetAndList(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "crm.db")
 	out, _, code := crm(t, dbPath, "provider", "list", "-f", "json")
@@ -239,10 +259,64 @@ func TestProvider_SetAndList(t *testing.T) {
 	_, _, code = crm(t, dbPath, "provider", "set", "mine", "--enabled=false")
 	require.Equal(t, 0, code)
 	out, _, _ = crm(t, dbPath, "provider", "list", "-f", "json")
+	found := false
 	for _, p := range jsonRows(t, out) {
 		if p["name"] == "mine" {
+			found = true
 			assert.Equal(t, false, p["enabled"])
 			assert.Equal(t, "https://x/{{input}}", p["config"].(map[string]any)["url"], "unchanged flags are kept")
 		}
 	}
+	require.True(t, found, "provider mine is listed")
+}
+
+func TestProvider_AuthEnvIsAVariableName(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "crm.db")
+	_, stderr, code := crm(t, dbPath, "provider", "set", "github", "--auth-env", "ghp_abc123-secret!")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, stderr, "NAME of an environment variable")
+	assert.NotContains(t, stderr, "ghp_abc123")
+	_, stderr, code = crm(t, dbPath, "provider", "set", "github", "--auth-env", "GITHUB_TOKEN")
+	assert.Equal(t, 0, code, stderr)
+}
+
+func TestProvider_ListEnvPriceWithDollar(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "crm.db")
+	out, _, code := crmEnv(t, []string{"CRM_LLM_PRICE_IN=$1.50", "CRM_LLM_PRICE_OUT=2"}, dbPath, "provider", "list", "-f", "json")
+	require.Equal(t, 0, code)
+	for _, p := range jsonRows(t, out) {
+		if p["name"] == "llm" {
+			assert.NotContains(t, p["price"], "$$")
+			assert.Contains(t, p["price"], "$1.50 (env)")
+		}
+	}
+}
+
+func TestColumnAdd_ReportsFilledOfRows(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	_, stderr, code := crm(t, dbPath, "table", "import", writeFile(t, dir, "l.csv", "name\na\nb\n"), "--as", "l")
+	require.Equal(t, 0, code, stderr)
+	out, stderr, code := crm(t, dbPath, "column", "add", "l", "label", "--type", "formula", "--expr", "{{name}}!", "-f", "json")
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, "2/2", jsonRows(t, out)[0]["filled"])
+}
+
+func TestTable_ListKeylessExportFormatCaseShowJSONOrder(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	_, stderr, code := crm(t, dbPath, "table", "import", writeFile(t, dir, "l.csv", "zed,amy\n1,2\n"), "--as", "l")
+	require.Equal(t, 0, code, stderr)
+
+	out, _, code := crm(t, dbPath, "table", "list", "-f", "table")
+	require.Equal(t, 0, code)
+	assert.NotContains(t, out, "<nil>")
+
+	exported, stderr, code := crm(t, dbPath, "table", "export", "l", "-f", "JSON")
+	require.Equal(t, 0, code, stderr)
+	assert.Less(t, strings.Index(exported, `"zed"`), strings.Index(exported, `"amy"`))
+
+	shown, stderr, code := crm(t, dbPath, "table", "show", "l", "-f", "json")
+	require.Equal(t, 0, code, stderr)
+	assert.Less(t, strings.Index(shown, `"zed"`), strings.Index(shown, `"amy"`), "show keeps column order like export")
 }

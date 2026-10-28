@@ -162,10 +162,23 @@ func loadTask(file string) (*Task, error) {
 		return nil, model.NewExitError(model.ErrValidation, "task %s has no batch plan", file)
 	case t.PerEntity == nil && t.PerEntityNA == "":
 		return nil, model.NewExitError(model.ErrValidation, "task %s: give a per_entity plan or per_entity_na", file)
+	case t.PerEntity != nil && t.PerEntityNA != "":
+		return nil, model.NewExitError(model.ErrValidation, "task %s: give per_entity or per_entity_na, not both", file)
 	}
 	for _, p := range []*Plan{t.Batch, t.PerEntity} {
-		if p != nil && len(p.Checks) == 0 {
+		if p == nil {
+			continue
+		}
+		if len(p.Checks) == 0 {
 			return nil, model.NewExitError(model.ErrValidation, "task %s: every plan needs checks", file)
+		}
+		for i, c := range p.Checks {
+			if (c.SQL != "") == (c.Result != nil) {
+				return nil, model.NewExitError(model.ErrValidation, "task %s: check %d needs exactly one of sql or result", file, i+1)
+			}
+			if c.Equals == nil && c.Gte == nil && c.Lte == nil && c.Len == nil {
+				return nil, model.NewExitError(model.ErrValidation, "task %s: check %d asserts nothing (give equals, gte, lte or len)", file, i+1)
+			}
 		}
 	}
 	return &t, nil
