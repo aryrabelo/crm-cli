@@ -43,6 +43,9 @@ func TestBenchRun_RepositoryTasks(t *testing.T) {
 			assert.EqualValues(t, 1, imp["batch_calls"])
 			assert.EqualValues(t, 135, imp["per_entity_calls"])
 			assert.Equal(t, "135.0x", imp["gap"])
+			for task, r := range byTask {
+				assert.Contains(t, r, "batch_provider_calls", task)
+			}
 			assert.EqualValues(t, 40, byTask["update-20-titles"]["per_entity_calls"])
 			assert.Equal(t, "n/a", byTask["qualify-20"]["per_entity_calls"])
 			assert.Equal(t, "FAIL", byTask["find-dedupe-people"]["per_entity_check"])

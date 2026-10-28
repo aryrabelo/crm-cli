@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 
 	"github.com/jdanielnd/crm-cli/internal/format"
 	"github.com/jdanielnd/crm-cli/internal/model"
@@ -58,6 +59,8 @@ var providerColumns = []format.ColumnDef{
 }
 
 // priceText is the price column: per call, or per 1M tokens for llm providers.
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 func priceText(c *provider.Config) string {
 	if c.Kind != "llm" {
 		return c.Price.String()
@@ -67,7 +70,11 @@ func priceText(c *provider.Config) string {
 		case p != nil:
 			return provider.Cost(math.Round(*p * 1e6)).String()
 		case os.Getenv(env) != "":
-			return "$" + os.Getenv(env) + " (env)"
+			c, err := provider.ParseUSD(os.Getenv(env))
+			if err != nil {
+				return "invalid (env)"
+			}
+			return c.String() + " (env)"
 		default:
 			return "unset"
 		}
@@ -179,6 +186,9 @@ default 512), --base-url (default $CRM_LLM_BASE_URL or the OpenAI API).`,
 				cfg.Rate = rate
 			}
 			if f.Changed("auth-env") {
+				if authEnv != "" && !envNameRE.MatchString(authEnv) {
+					return model.NewExitError(model.ErrValidation, "--auth-env takes the NAME of an environment variable (e.g. MINE_KEY), not the secret itself")
+				}
 				cfg.AuthRef = authEnv
 			}
 			if f.Changed("enabled") {

@@ -24,7 +24,7 @@ var columnColumns = []format.ColumnDef{
 	{Header: "Column", Field: "name"},
 	{Header: "Type", Field: "type"},
 	{Header: "Definition", Field: "definition"},
-	{Header: "Max Cost/Row", Field: "cost_est"},
+	{Header: "Est. Cost/Row", Field: "cost_est"},
 	{Header: "Filled", Field: "filled"},
 }
 
@@ -85,7 +85,11 @@ func columnAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{service.ColumnData(c, 0, 0)}, columnColumns[:4], flagQuiet)
+			_, view, err := newService(db).View(cmd.Context(), args[0], nil)
+			if err != nil {
+				return err
+			}
+			return format.Output(os.Stdout, resolveFormat(), []map[string]any{service.ColumnData(c, filledCells(view, c.Name), len(view.Cells))}, columnColumns[:4], flagQuiet)
 		},
 	}
 	f := cmd.Flags()
@@ -112,17 +116,22 @@ func columnListCmd() *cobra.Command {
 			}
 			data := make([]map[string]any, len(view.Columns))
 			for i, c := range view.Columns {
-				filled := 0
-				for _, cells := range view.Cells {
-					if !value.Empty(cells[c.Name]) {
-						filled++
-					}
-				}
-				data[i] = service.ColumnData(c, filled, len(view.Cells))
+				data[i] = service.ColumnData(c, filledCells(view, c.Name), len(view.Cells))
 			}
 			return format.Output(os.Stdout, resolveFormat(), data, columnColumns, flagQuiet)
 		},
 	}
+}
+
+// filledCells counts the rows of view whose cell in the named column is set.
+func filledCells(view *table.View, name string) int {
+	filled := 0
+	for _, cells := range view.Cells {
+		if !value.Empty(cells[name]) {
+			filled++
+		}
+	}
+	return filled
 }
 
 func columnRmCmd() *cobra.Command {

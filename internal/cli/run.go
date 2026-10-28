@@ -51,7 +51,10 @@ var estimateColumns = []format.ColumnDef{
 
 // printEstimate reports a dry run: a summary line on stderr, the per-column
 // estimate on stdout.
-func printEstimate(est *run.Estimate, opts run.Options) error {
+//
+// avail is the budget the run can still spend (the whole budget for a new
+// run, budget minus spent for a resumed one); availSet is false without one.
+func printEstimate(est *run.Estimate, avail provider.Cost, availSet bool) error {
 	data := make([]map[string]any, 0, len(est.Columns)+1)
 	for _, ce := range est.Columns {
 		data = append(data, service.EstimateData(ce))
@@ -67,8 +70,8 @@ func printEstimate(est *run.Estimate, opts run.Options) error {
 	if t.Unbounded > 0 {
 		fmt.Fprintf(os.Stderr, "%d item(s) send a prompt built from a column computed earlier in this run, so its size (and price) is not known yet; the budget still caps the run and items that do not fit are skipped\n", t.Unbounded)
 	}
-	if opts.BudgetSet && (t.Worst > opts.Budget || t.Unbounded > 0) {
-		fmt.Fprintf(os.Stderr, "budget %s may not cover the worst case; items that do not fit will be skipped (resumable)\n", opts.Budget)
+	if availSet && (t.Worst > avail || t.Unbounded > 0) {
+		fmt.Fprintf(os.Stderr, "budget %s may not cover the worst case; items that do not fit will be skipped (resumable)\n", avail)
 	}
 	return format.Output(os.Stdout, resolveFormat(), data, estimateColumns, false)
 }
@@ -158,12 +161,16 @@ stopped the run (budget_exhausted); 6 when it completed with failed items;
 				Only:           only,
 				RetryUncertain: retryUncertain,
 			}
+			resuming := cmd.Flags().Changed("resume")
+			if resuming && resume < 1 {
+				return model.NewExitError(model.ErrValidation, "--resume takes a run id (1 or more), got %d", resume)
+			}
 			switch {
-			case resume != 0 && (len(args) > 0 || len(columns) > 0 || len(only) > 0):
+			case resuming && (len(args) > 0 || len(columns) > 0 || len(only) > 0):
 				return model.NewExitError(model.ErrValidation, "--resume takes the table, columns and rows from the run; drop <table>, --columns and --only")
-			case resume == 0 && len(args) == 0:
+			case !resuming && len(args) == 0:
 				return model.NewExitError(model.ErrValidation, "table is required: crm run <table> --columns a,b")
-			case resume == 0:
+			case !resuming:
 				opts.Table = args[0]
 			}
 			if cmd.Flags().Changed("budget") {
@@ -175,6 +182,12 @@ stopped the run (budget_exhausted); 6 when it completed with failed items;
 			}
 			if concurrency < 1 {
 				return model.NewExitError(model.ErrValidation, "--concurrency must be at least 1")
+			}
+			if retry < 0 {
+				return model.NewExitError(model.ErrValidation, "--retry must be 0 or more")
+			}
+			if backoffBase <= 0 {
+				return model.NewExitError(model.ErrValidation, "--backoff must be a positive duration (e.g. 500ms)")
 			}
 
 			db, err := openDB()
@@ -189,7 +202,19 @@ stopped the run (budget_exhausted); 6 when it completed with failed items;
 				if err != nil {
 					return err
 				}
-				return printEstimate(est, opts)
+				avail, availSet := opts.Budget, opts.BudgetSet
+				if resuming {
+					r, err := run.NewStore(db).Get(cmd.Context(), resume)
+					if err != nil {
+						return err
+					}
+					budget := r.Budget
+					if opts.BudgetSet {
+						budget = opts.Budget
+					}
+					avail, availSet = max(budget-r.Spent, 0), true
+				}
+				return printEstimate(est, avail, availSet)
 			}
 
 			res, err := engine.Execute(cmd.Context(), opts)
@@ -238,12 +263,22 @@ func runListCmd() *cobra.Command {
 				return err
 			}
 			defer db.Close()
-			runs, err := run.NewStore(db).List(cmd.Context())
+			rs := run.NewStore(db)
+			runs, err := rs.List(cmd.Context())
 			if err != nil {
 				return err
 			}
 			data := make([]map[string]any, len(runs))
 			for i, r := range runs {
+				// Stored stats are only written when a run finishes; count
+				// the items now so in-progress and killed runs show real
+				// numbers (as run show does).
+				st, err := rs.Stats(cmd.Context(), r.ID)
+				if err != nil {
+					return err
+				}
+				st.DurationMS = r.Stats.DurationMS
+				r.Stats = st
 				data[i] = service.RunData(r)
 			}
 			return format.Output(os.Stdout, resolveFormat(), data, runListColumns, flagQuiet)

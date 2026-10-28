@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -63,6 +64,9 @@ func TestRun_ExitStatus(t *testing.T) {
 // SIGINT and SIGTERM stop a run (status interrupted, resumable) and the
 // process exits 128 + the signal number.
 func TestRun_SignalExitStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Process.Signal is not supported on Windows")
+	}
 	for _, tc := range []struct {
 		sig  syscall.Signal
 		code int
@@ -107,6 +111,24 @@ func TestRun_SignalExitStatus(t *testing.T) {
 			out, _, code := crmEnv(t, env, dbPath, "run", "show", "1", "-f", "json")
 			require.Equal(t, 0, code)
 			assert.Equal(t, "interrupted", jsonRows(t, out)[0]["status"])
+
+			// run list counts the items live; the stored stats are only
+			// written when a run finishes.
+			out, _, code = crmEnv(t, env, dbPath, "run", "list", "-f", "json")
+			require.Equal(t, 0, code)
+			assert.EqualValues(t, 2, jsonRows(t, out)[0]["items"])
 		})
+	}
+}
+
+func TestRun_FlagValidation(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "crm.db")
+	for name, args := range map[string][]string{
+		"negative retry": {"run", "t", "--columns", "c", "--retry", "-1"},
+		"zero backoff":   {"run", "t", "--columns", "c", "--backoff", "0"},
+		"resume zero":    {"run", "--resume", "0"},
+	} {
+		_, stderr, code := crm(t, dbPath, args...)
+		assert.Equal(t, 2, code, "%s: %s", name, stderr)
 	}
 }

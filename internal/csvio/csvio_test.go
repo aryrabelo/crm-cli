@@ -78,3 +78,18 @@ func TestWrite_TSVQuotesTabs(t *testing.T) {
 	require.NoError(t, csvio.Write(&buf, '\t', []string{"a", "b"}, [][]string{{"x\ty", "1,2"}}, csvio.DefaultDialect))
 	assert.Equal(t, "a\tb\n\"x\ty\"\t1,2\n", buf.String())
 }
+
+func TestParse_RejectsMixedLineEndings(t *testing.T) {
+	for _, in := range []string{"a,b\n1,2\r\n3,4\n", "a,b\r\n1,2\n"} {
+		_, err := csvio.Parse([]byte(in))
+		require.Error(t, err, in)
+		assert.Contains(t, err.Error(), "mixed line endings")
+	}
+}
+
+func TestParse_RejectsBareQuoteAndCR(t *testing.T) {
+	for _, in := range []string{"a,b\n1,x\"y\n", "a,b\n1,x\ry\n"} {
+		_, err := csvio.Parse([]byte(in))
+		require.Error(t, err, in)
+	}
+}

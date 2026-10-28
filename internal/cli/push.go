@@ -66,8 +66,11 @@ fields. Rows without a name or dedupe key are reported and skipped.
 				verb, res.Rows, res.Table, res.To, res.Dedupe, res.Created, res.Updated, res.Merged, res.Failed)
 			data := make([]map[string]any, len(res.Results))
 			for i, r := range res.Results {
-				data[i] = map[string]any{"row": r.Row, "action": r.Action, "id": r.ID, "key": r.Key,
+				data[i] = map[string]any{"row": r.Row, "action": r.Action, "key": r.Key,
 					"matched": r.Matched, "score": r.Score, "error": r.Error}
+				if r.ID != 0 { // failed rows and dry-run creates have no entity yet; --quiet prints real ids only
+					data[i]["id"] = r.ID
+				}
 			}
 			return format.Output(os.Stdout, resolveFormat(), data, pushColumns, flagQuiet)
 		},
