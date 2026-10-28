@@ -24,6 +24,7 @@ func TestMCPServeHelp(t *testing.T) {
 }
 
 func TestMCPServe_HTTPFlags(t *testing.T) {
+	t.Setenv("CRM_MCP_TOKEN", "") // an inherited token would let the non-loopback cases start a server
 	dbPath := filepath.Join(t.TempDir(), "crm.db")
 	cases := []struct {
 		name string
@@ -32,6 +33,7 @@ func TestMCPServe_HTTPFlags(t *testing.T) {
 	}{
 		{"non-loopback needs a token", []string{"--http", "0.0.0.0:0"}, "listens beyond this machine"},
 		{"all interfaces needs a token", []string{"--http", ":0"}, "listens beyond this machine"},
+		{"short token beyond loopback", []string{"--http", "0.0.0.0:0", "--token", "x"}, "at least 32 characters"},
 		{"token needs http", []string{"--token", "x"}, "--token needs --http"},
 		{"bad address", []string{"--http", "8765"}, "want HOST:PORT"},
 	}

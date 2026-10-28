@@ -46,6 +46,7 @@ func newQualifier(t *testing.T) *fakeQualifier {
 		}
 		assert.Equal(t, "fake-model", req.Model)
 		user := req.Messages[1].Content
+		assert.Contains(t, user, "B2B software companies selling to SMBs", "the prompt carries the criteria text")
 		company, desc := "", ""
 		for _, line := range strings.Split(user, "\n") {
 			if c, ok := strings.CutPrefix(line, "- company: "); ok {
@@ -172,6 +173,10 @@ func TestQualify_Acceptance(t *testing.T) {
 	assert.Equal(t, []string{"Co00", "co00.com", "B2B payroll software for SMBs", "yes", "The description says Co00 sells B2B software."}, recs.Rows[0])
 	assert.Equal(t, "no", recs.Rows[1][3])
 	assert.Equal(t, "maybe", recs.Rows[2][3])
+	for _, row := range recs.Rows[:19] {
+		assert.Contains(t, row[4], "The description", "row %s has a reason", row[0])
+		assert.Contains(t, row[4], row[0], "the reason mentions its company")
+	}
 	assert.Equal(t, []string{"Broken Co", "broken.com", "B2B tooling", "", ""}, recs.Rows[19])
 	out, _, _ = crmEnv(t, env, dbPath, "table", "export", "leads", "--only", "qualified=yes", "-f", "tsv")
 	assert.Equal(t, 8, strings.Count(out, "\n"), "header + 7 qualified rows")
@@ -205,7 +210,10 @@ func TestQualify_PromptFieldsSkipBlobs(t *testing.T) {
 		var req struct {
 			Messages []struct{ Content string } `json:"messages"`
 		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
 		prompts = append(prompts, req.Messages[len(req.Messages)-1].Content)
 		mu.Unlock()

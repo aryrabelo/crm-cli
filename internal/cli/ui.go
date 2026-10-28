@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 
-	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/jdanielnd/crm-cli/internal/provider"
 	"github.com/jdanielnd/crm-cli/internal/ui"
@@ -57,19 +57,9 @@ started in another terminal shows up on the page while it executes.`,
 			if _, _, err := net.SplitHostPort(addr); err != nil {
 				return model.NewExitError(model.ErrValidation, "--addr %q: want HOST:PORT", addr)
 			}
-			if token == "" {
-				token = os.Getenv(uiTokenEnv)
-			}
-			if token == "" && !httpguard.IsLoopback(addr) {
-				return model.NewExitError(model.ErrValidation,
-					"--addr %s listens beyond this machine: set --token or %s (or bind 127.0.0.1)", addr, uiTokenEnv)
-			}
-			if token == "" {
-				t, err := httpguard.NewToken()
-				if err != nil {
-					return err
-				}
-				token = t
+			token, _, err := resolveHTTPToken(addr, "--addr", token, uiTokenEnv)
+			if err != nil {
+				return err
 			}
 			db, err := openDB()
 			if err != nil {
@@ -111,7 +101,7 @@ func browserHost(a net.Addr) string {
 
 // pageURL is the page URL with the token in its fragment.
 func pageURL(a net.Addr, token string) string {
-	return "http://" + browserHost(a) + "/#token=" + url.QueryEscape(token)
+	return "http://" + browserHost(a) + "/#token=" + strings.ReplaceAll(url.QueryEscape(token), "+", "%20")
 }
 
 func openBrowser(target string) error {

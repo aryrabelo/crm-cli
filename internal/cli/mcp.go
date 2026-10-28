@@ -5,7 +5,6 @@ import (
 	"net"
 	"os"
 
-	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	crmmcp "github.com/jdanielnd/crm-cli/internal/mcp"
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/spf13/cobra"
@@ -47,7 +46,7 @@ http://ADDR` + crmmcp.HTTPPath + `, and every request needs
 		Example: `  crm mcp serve
   crm mcp serve --http 127.0.0.1:8765          # prints a generated token on stderr
   CRM_MCP_TOKEN=s3cret crm mcp serve --http 127.0.0.1:8765
-  curl -H "Authorization: Bearer $CRM_MCP_TOKEN" -H 'Content-Type: application/json' \
+  curl -H "Authorization: Bearer s3cret" -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' http://127.0.0.1:8765/mcp \
     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'`,
 		Args: cobra.NoArgs,
@@ -55,24 +54,14 @@ http://ADDR` + crmmcp.HTTPPath + `, and every request needs
 			if addr == "" && cmd.Flags().Changed("token") {
 				return model.NewExitError(model.ErrValidation, "--token needs --http (stdio has no auth)")
 			}
-			if token == "" {
-				token = os.Getenv(mcpTokenEnv)
-			}
 			generated := false
 			if addr != "" {
 				if _, _, err := net.SplitHostPort(addr); err != nil {
 					return model.NewExitError(model.ErrValidation, "--http %q: want HOST:PORT or :PORT", addr)
 				}
-				if token == "" && !httpguard.IsLoopback(addr) {
-					return model.NewExitError(model.ErrValidation,
-						"--http %s listens beyond this machine: set --token or %s (or bind 127.0.0.1)", addr, mcpTokenEnv)
-				}
-				if token == "" {
-					t, err := httpguard.NewToken()
-					if err != nil {
-						return err
-					}
-					token, generated = t, true
+				var err error
+				if token, generated, err = resolveHTTPToken(addr, "--http", token, mcpTokenEnv); err != nil {
+					return err
 				}
 			}
 			db, err := openDB()
