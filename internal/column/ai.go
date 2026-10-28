@@ -1,8 +1,11 @@
 package column
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -49,8 +52,12 @@ func ParseOutput(s string) (*OutputSpec, error) {
 		if m == nil {
 			return nil, invalid("use score:MIN-MAX (e.g. score:0-100)")
 		}
-		spec.Min, _ = strconv.ParseFloat(m[1], 64)
-		spec.Max, _ = strconv.ParseFloat(m[2], 64)
+		var errMin, errMax error
+		spec.Min, errMin = strconv.ParseFloat(m[1], 64)
+		spec.Max, errMax = strconv.ParseFloat(m[2], 64)
+		if errMin != nil || errMax != nil || math.IsInf(spec.Min, 0) || math.IsInf(spec.Max, 0) {
+			return nil, invalid("MIN and MAX must be finite numbers")
+		}
 		if spec.Min >= spec.Max {
 			return nil, invalid("MIN must be below MAX")
 		}
@@ -84,7 +91,7 @@ func (o *OutputSpec) shape() string {
 	case OutputScore:
 		return "<number>"
 	case OutputEnum:
-		return `"` + strings.Join(o.Values, `" | "`) + `"`
+		return quoteAll(o.Values, " | ")
 	case OutputBool:
 		return "true | false"
 	default:
@@ -98,12 +105,26 @@ func (o *OutputSpec) describe() string {
 	case OutputScore:
 		return fmt.Sprintf("a JSON number from %s to %s", formatNumber(o.Min), formatNumber(o.Max))
 	case OutputEnum:
-		return `exactly one of the strings "` + strings.Join(o.Values, `", "`) + `"`
+		return "exactly one of the strings " + quoteAll(o.Values, ", ")
 	case OutputBool:
 		return "a JSON boolean, true or false"
 	default:
 		return "a short, non-empty JSON string"
 	}
+}
+
+// quoteAll renders each label as a JSON string (escaping quotes, backslashes
+// and control characters) joined by sep, for the answer contract.
+func quoteAll(labels []string, sep string) string {
+	quoted := make([]string, len(labels))
+	for i, l := range labels {
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(l) // a string always encodes
+		quoted[i] = strings.TrimSuffix(b.String(), "\n")
+	}
+	return strings.Join(quoted, sep)
 }
 
 // normalize checks an answered value and returns its stored form.
@@ -165,11 +186,17 @@ func (c *Column) validateAI(exists func(string) bool, columns []*Column) error {
 	if len(c.Config.Waterfall) == 0 {
 		return model.NewExitError(model.ErrValidation, "ai column %q needs an llm provider (--waterfall llm)", c.Name)
 	}
+	if err := checkWaterfall(c); err != nil {
+		return err
+	}
 	if strings.TrimSpace(c.Config.Prompt) == "" {
 		return model.NewExitError(model.ErrValidation, "ai column %q needs --prompt <file.md|text>", c.Name)
 	}
 	if _, err := ParseOutput(c.Config.Output); err != nil {
 		return err
+	}
+	if c.Config.FieldLimit < 0 {
+		return model.NewExitError(model.ErrValidation, "ai column %q: field limit must be 0 (no cap) or more", c.Name)
 	}
 	refs := placeholder.FindAllStringSubmatch(c.Config.Prompt, -1)
 	if len(refs) == 0 {
@@ -204,7 +231,7 @@ func (c *Column) aiInput(cells map[string]any) provider.Input {
 			continue
 		}
 		if v, _ := value.Lookup(cells[name], path); !value.Empty(v) {
-			return provider.Input{Value: EvalFormula(c.Config.Prompt, cells)}
+			return provider.Input{Value: render(c.Config.Prompt, cells, c.Config.FieldLimit)}
 		}
 	}
 	return provider.Input{}

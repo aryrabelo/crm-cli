@@ -40,6 +40,14 @@ type EntityRow struct {
 	Custom map[string]string
 }
 
+// BatchRecord is one data row of an import batch: the entity it landed on and
+// the CSV cells it was imported from, one per batch column (nil for a batch
+// imported before cells were recorded).
+type BatchRecord struct {
+	EntityID int64
+	Cells    []string
+}
+
 // ImportableEntityTypes lists entity types `crm import` and `crm rows` accept.
 var ImportableEntityTypes = []string{"person", "organization"}
 

@@ -14,14 +14,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// NewServer creates an MCP server with all CRM tools registered.
-func NewServer(db *sql.DB, version string) *server.MCPServer {
-	s := server.NewMCPServer(
-		"crm",
-		version,
-		server.WithToolCapabilities(false),
-	)
-
+// registerEntityTools registers the upstream per-entity CRM tools (one
+// person, org, deal, task... per call).
+func registerEntityTools(s *server.MCPServer, db *sql.DB) {
 	pr := repo.NewPersonRepo(db)
 	or := repo.NewOrgRepo(db)
 	ir := repo.NewInteractionRepo(db)
@@ -232,8 +227,6 @@ func NewServer(db *sql.DB, version string) *server.MCPServer {
 		),
 		statsHandler(db),
 	)
-
-	return s
 }
 
 // Helper to convert any value to JSON text result

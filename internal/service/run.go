@@ -1,0 +1,128 @@
+package service
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/jdanielnd/crm-cli/internal/provider"
+	"github.com/jdanielnd/crm-cli/internal/run"
+)
+
+// RunStatus returns run id with live item counts (a run may be in progress
+// or interrupted; its stored stats are only final once it finishes).
+func (s *Service) RunStatus(ctx context.Context, id int64) (*run.Run, error) {
+	rs := run.NewStore(s.db)
+	r, err := rs.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := withLiveStats(ctx, rs, r); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// withLiveStats replaces the stored stats of r with its current item counts
+// (keeping the recorded duration).
+func withLiveStats(ctx context.Context, rs *run.Store, r *run.Run) error {
+	st, err := rs.Stats(ctx, r.ID)
+	if err != nil {
+		return err
+	}
+	st.DurationMS = r.Stats.DurationMS
+	r.Stats = st
+	return nil
+}
+
+// RunItems returns every row × column item of run id.
+func (s *Service) RunItems(ctx context.Context, id int64) ([]*run.Item, error) {
+	rs := run.NewStore(s.db)
+	if _, err := rs.Get(ctx, id); err != nil {
+		return nil, err
+	}
+	return rs.Items(ctx, id, false)
+}
+
+// ItemData is the output record of a run item.
+func ItemData(it *run.Item) map[string]any {
+	m := map[string]any{
+		"id": it.ID, "row": it.RowPosition, "column": it.Column, "status": it.Status,
+		"cache_hit": it.CacheHit, "attempts": it.Attempts, "calls": it.Calls,
+		"cost": it.Cost.String(), "cost_usd": it.Cost.USD(), "ms": it.MS,
+		"uncertain": it.Uncertain.String(), "uncertain_usd": it.Uncertain.USD(),
+		"tokens_in": it.TokensIn, "tokens_out": it.TokensOut,
+		"provider": "", "value": "", "error": "",
+	}
+	if it.Provider != nil {
+		m["provider"] = *it.Provider
+	}
+	if it.Value != nil {
+		m["value"] = *it.Value
+	}
+	if it.Error != nil {
+		// Redacted again on output: rows written by earlier builds stored
+		// provider errors verbatim.
+		m["error"] = provider.RedactError(*it.Error)
+	}
+	return m
+}
+
+// RunData is the output record of a run.
+func RunData(r *run.Run) map[string]any {
+	st := r.Stats
+	return map[string]any{
+		"id":         r.ID,
+		"uuid":       r.UUID,
+		"table":      r.Table,
+		"columns":    strings.Join(r.Columns, ","),
+		"status":     string(r.Status),
+		"items":      st.Items,
+		"ok":         st.OK,
+		"empty":      st.Empty,
+		"failed":     st.Failed,
+		"skipped":    st.Skipped,
+		"pending":    st.Pending,
+		"cache_hits": st.CacheHits,
+		"calls":      st.Calls,
+		"tokens_in":  st.TokensIn,
+		"tokens_out": st.TokensOut,
+		"providers":  st.Providers,
+		"spent":      r.Spent.String(),
+		"spent_usd":  r.Spent.USD(),
+		"budget":     r.Budget.String(),
+		"budget_usd": r.Budget.USD(),
+		// uncertain_spent is the part of spent counted for calls that got no
+		// response after the request was sent (the provider may have billed).
+		"uncertain_items":     st.Uncertain,
+		"uncertain_spent":     provider.Cost(st.UncertainMicros).String(),
+		"uncertain_spent_usd": provider.Cost(st.UncertainMicros).USD(),
+		"duration":            (time.Duration(st.DurationMS) * time.Millisecond).String(),
+		"duration_ms":         st.DurationMS,
+		"started_at":          r.StartedAt,
+		"finished_at":         r.FinishedAt,
+	}
+}
+
+// EstimateData is the output record of one column (or the total) of a dry run.
+func EstimateData(ce *run.ColumnEstimate) map[string]any {
+	m := map[string]any{
+		"column":          ce.Column,
+		"items":           ce.Items,
+		"cache_hits":      ce.CacheHits,
+		"no_input":        ce.NoInput,
+		"calls":           ce.Calls,
+		"expected":        ce.Expected.String(),
+		"expected_usd":    ce.Expected.USD(),
+		"worst":           ce.Worst.String(),
+		"worst_usd":       ce.Worst.USD(),
+		"unbounded_items": ce.Unbounded,
+	}
+	if ce.Unbounded > 0 {
+		// The usd fields are lower bounds: the prompt size of these items
+		// depends on a column computed earlier in the same run.
+		m["expected"] = "≥ " + ce.Expected.String()
+		m["worst"] = "unbounded (≥ " + ce.Worst.String() + ")"
+	}
+	return m
+}

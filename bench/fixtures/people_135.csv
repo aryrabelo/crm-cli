@@ -1,0 +1,136 @@
+first_name,last_name,email,company,domain,title,city,description
+Ana,Silva,ana.silva@acme.io,Acme Analytics,acme.io,CEO,São Paulo,B2B SaaS analytics for mid-market finance teams
+Bruno,Silva,bruno.silva@globex.com,Globex Payroll,globex.com,CTO,Rio de Janeiro,B2B payroll software for SMBs
+Carla,Silva,carla.silva@initech.io,Initech Cloud,initech.io,Head of Sales,Lisboa,B2B cloud cost management platform
+Diego,Silva,diego.silva@umbrella.dev,Umbrella Security,umbrella.dev,Engineer,São Paulo,B2B security tooling for DevOps teams
+Elisa,Silva,elisa.silva@hooli.com,Hooli Data,hooli.com,Designer,Rio de Janeiro,B2B data pipelines for retailers
+Fabio,Silva,fabio.silva@stark.app,Stark Logistics,stark.app,CEO,Lisboa,B2B fleet routing software
+Gabriela,Silva,gabriela.silva@wayne.io,Wayne Billing,wayne.io,CTO,São Paulo,B2B billing and invoicing API
+Hugo,Silva,hugo.silva@cyberdyne.ai,Cyberdyne Ops,cyberdyne.ai,Head of Sales,Rio de Janeiro,B2B incident response automation
+Iris,Silva,iris.silva@soylent.co,Soylent HR,soylent.co,Engineer,Lisboa,B2B HR suite for clinics
+Joao,Silva,joao.silva@piedpiper.fm,Pied Piper Music,piedpiper.fm,Designer,São Paulo,consumer music streaming app
+Karen,Silva,karen.silva@bluth.shop,Bluth Bananas,bluth.shop,CEO,Rio de Janeiro,consumer frozen banana stands
+Lucas,Silva,lucas.silva@dunder.store,Dunder Paper,dunder.store,CTO,Lisboa,consumer stationery e-commerce
+Marina,Silva,marina.silva@krusty.food,Krusty Burgers,krusty.food,Head of Sales,São Paulo,consumer burger delivery app
+Nuno,Silva,nuno.silva@duff.beer,Duff Drinks,duff.beer,Engineer,Rio de Janeiro,consumer beverage brand
+Olga,Silva,olga.silva@vandelay.trip,Vandelay Travel,vandelay.trip,Designer,Lisboa,consumer travel booking app
+Ana,Souza,ana.souza@oceanic.air,Oceanic Air,oceanic.air,CEO,São Paulo,consumer airline
+Bruno,Souza,bruno.souza@gringotts.money,Gringotts Wallet,gringotts.money,CTO,Rio de Janeiro,consumer savings wallet
+Carla,Souza,carla.souza@ollivander.toys,Ollivander Wands,ollivander.toys,Head of Sales,Lisboa,consumer toy store
+Diego,Souza,diego.souza@monsters.agency,Monsters Agency,monsters.agency,Engineer,São Paulo,creative services agency
+Elisa,Souza,elisa.souza@tyrell.consulting,Tyrell Consulting,tyrell.consulting,Designer,Rio de Janeiro,management consulting partners
+Fabio,Souza,fabio.souza@nakatomi.jp,Nakatomi Partners,nakatomi.jp,CEO,Lisboa,real estate holding group
+Gabriela,Souza,gabriela.souza@massive.co,Massive Dynamic,massive.co,CTO,São Paulo,research conglomerate
+Hugo,Souza,hugo.souza@aperture.science,Aperture Labs,aperture.science,Head of Sales,Rio de Janeiro,physics research lab
+Iris,Souza,iris.souza@blackmesa.org,Black Mesa,blackmesa.org,Engineer,Lisboa,non-profit research institute
+Joao,Souza,joao.souza@weyland.studio,Weyland Studio,weyland.studio,Designer,São Paulo,film production studio
+Karen,Souza,karen.souza@rekall.media,Rekall Media,rekall.media,CEO,Rio de Janeiro,memory tourism media group
+Lucas,Souza,lucas.souza@zorg.fr,Zorg Industries,zorg.fr,CTO,Lisboa,industrial manufacturing group
+Marina,Souza,marina.souza@acme.io,Acme Analytics,acme.io,Head of Sales,São Paulo,B2B SaaS analytics for mid-market finance teams
+Nuno,Souza,nuno.souza@globex.com,Globex Payroll,globex.com,Engineer,Rio de Janeiro,B2B payroll software for SMBs
+Olga,Souza,olga.souza@initech.io,Initech Cloud,initech.io,Designer,Lisboa,B2B cloud cost management platform
+Ana,Costa,ana.costa@umbrella.dev,Umbrella Security,umbrella.dev,CEO,São Paulo,B2B security tooling for DevOps teams
+Bruno,Costa,bruno.costa@hooli.com,Hooli Data,hooli.com,CTO,Rio de Janeiro,B2B data pipelines for retailers
+Carla,Costa,carla.costa@stark.app,Stark Logistics,stark.app,Head of Sales,Lisboa,B2B fleet routing software
+Diego,Costa,diego.costa@wayne.io,Wayne Billing,wayne.io,Engineer,São Paulo,B2B billing and invoicing API
+Elisa,Costa,elisa.costa@cyberdyne.ai,Cyberdyne Ops,cyberdyne.ai,Designer,Rio de Janeiro,B2B incident response automation
+Fabio,Costa,fabio.costa@soylent.co,Soylent HR,soylent.co,CEO,Lisboa,B2B HR suite for clinics
+Gabriela,Costa,gabriela.costa@piedpiper.fm,Pied Piper Music,piedpiper.fm,CTO,São Paulo,consumer music streaming app
+Hugo,Costa,hugo.costa@bluth.shop,Bluth Bananas,bluth.shop,Head of Sales,Rio de Janeiro,consumer frozen banana stands
+Iris,Costa,iris.costa@dunder.store,Dunder Paper,dunder.store,Engineer,Lisboa,consumer stationery e-commerce
+Joao,Costa,joao.costa@krusty.food,Krusty Burgers,krusty.food,Designer,São Paulo,consumer burger delivery app
+Karen,Costa,karen.costa@duff.beer,Duff Drinks,duff.beer,CEO,Rio de Janeiro,consumer beverage brand
+Lucas,Costa,lucas.costa@vandelay.trip,Vandelay Travel,vandelay.trip,CTO,Lisboa,consumer travel booking app
+Marina,Costa,marina.costa@oceanic.air,Oceanic Air,oceanic.air,Head of Sales,São Paulo,consumer airline
+Nuno,Costa,nuno.costa@gringotts.money,Gringotts Wallet,gringotts.money,Engineer,Rio de Janeiro,consumer savings wallet
+Olga,Costa,olga.costa@ollivander.toys,Ollivander Wands,ollivander.toys,Designer,Lisboa,consumer toy store
+Ana,Lima,ana.lima@monsters.agency,Monsters Agency,monsters.agency,CEO,São Paulo,creative services agency
+Bruno,Lima,bruno.lima@tyrell.consulting,Tyrell Consulting,tyrell.consulting,CTO,Rio de Janeiro,management consulting partners
+Carla,Lima,carla.lima@nakatomi.jp,Nakatomi Partners,nakatomi.jp,Head of Sales,Lisboa,real estate holding group
+Diego,Lima,diego.lima@massive.co,Massive Dynamic,massive.co,Engineer,São Paulo,research conglomerate
+Elisa,Lima,elisa.lima@aperture.science,Aperture Labs,aperture.science,Designer,Rio de Janeiro,physics research lab
+Fabio,Lima,fabio.lima@blackmesa.org,Black Mesa,blackmesa.org,CEO,Lisboa,non-profit research institute
+Gabriela,Lima,gabriela.lima@weyland.studio,Weyland Studio,weyland.studio,CTO,São Paulo,film production studio
+Hugo,Lima,hugo.lima@rekall.media,Rekall Media,rekall.media,Head of Sales,Rio de Janeiro,memory tourism media group
+Iris,Lima,iris.lima@zorg.fr,Zorg Industries,zorg.fr,Engineer,Lisboa,industrial manufacturing group
+Joao,Lima,joao.lima@acme.io,Acme Analytics,acme.io,Designer,São Paulo,B2B SaaS analytics for mid-market finance teams
+Karen,Lima,karen.lima@globex.com,Globex Payroll,globex.com,CEO,Rio de Janeiro,B2B payroll software for SMBs
+Lucas,Lima,lucas.lima@initech.io,Initech Cloud,initech.io,CTO,Lisboa,B2B cloud cost management platform
+Marina,Lima,marina.lima@umbrella.dev,Umbrella Security,umbrella.dev,Head of Sales,São Paulo,B2B security tooling for DevOps teams
+Nuno,Lima,nuno.lima@hooli.com,Hooli Data,hooli.com,Engineer,Rio de Janeiro,B2B data pipelines for retailers
+Olga,Lima,olga.lima@stark.app,Stark Logistics,stark.app,Designer,Lisboa,B2B fleet routing software
+Ana,Rocha,ana.rocha@wayne.io,Wayne Billing,wayne.io,CEO,São Paulo,B2B billing and invoicing API
+Bruno,Rocha,bruno.rocha@cyberdyne.ai,Cyberdyne Ops,cyberdyne.ai,CTO,Rio de Janeiro,B2B incident response automation
+Carla,Rocha,carla.rocha@soylent.co,Soylent HR,soylent.co,Head of Sales,Lisboa,B2B HR suite for clinics
+Diego,Rocha,diego.rocha@piedpiper.fm,Pied Piper Music,piedpiper.fm,Engineer,São Paulo,consumer music streaming app
+Elisa,Rocha,elisa.rocha@bluth.shop,Bluth Bananas,bluth.shop,Designer,Rio de Janeiro,consumer frozen banana stands
+Fabio,Rocha,fabio.rocha@dunder.store,Dunder Paper,dunder.store,CEO,Lisboa,consumer stationery e-commerce
+Gabriela,Rocha,gabriela.rocha@krusty.food,Krusty Burgers,krusty.food,CTO,São Paulo,consumer burger delivery app
+Hugo,Rocha,hugo.rocha@duff.beer,Duff Drinks,duff.beer,Head of Sales,Rio de Janeiro,consumer beverage brand
+Iris,Rocha,iris.rocha@vandelay.trip,Vandelay Travel,vandelay.trip,Engineer,Lisboa,consumer travel booking app
+Joao,Rocha,joao.rocha@oceanic.air,Oceanic Air,oceanic.air,Designer,São Paulo,consumer airline
+Karen,Rocha,karen.rocha@gringotts.money,Gringotts Wallet,gringotts.money,CEO,Rio de Janeiro,consumer savings wallet
+Lucas,Rocha,lucas.rocha@ollivander.toys,Ollivander Wands,ollivander.toys,CTO,Lisboa,consumer toy store
+Marina,Rocha,marina.rocha@monsters.agency,Monsters Agency,monsters.agency,Head of Sales,São Paulo,creative services agency
+Nuno,Rocha,nuno.rocha@tyrell.consulting,Tyrell Consulting,tyrell.consulting,Engineer,Rio de Janeiro,management consulting partners
+Olga,Rocha,olga.rocha@nakatomi.jp,Nakatomi Partners,nakatomi.jp,Designer,Lisboa,real estate holding group
+Ana,Alves,ana.alves@massive.co,Massive Dynamic,massive.co,CEO,São Paulo,research conglomerate
+Bruno,Alves,bruno.alves@aperture.science,Aperture Labs,aperture.science,CTO,Rio de Janeiro,physics research lab
+Carla,Alves,carla.alves@blackmesa.org,Black Mesa,blackmesa.org,Head of Sales,Lisboa,non-profit research institute
+Diego,Alves,diego.alves@weyland.studio,Weyland Studio,weyland.studio,Engineer,São Paulo,film production studio
+Elisa,Alves,elisa.alves@rekall.media,Rekall Media,rekall.media,Designer,Rio de Janeiro,memory tourism media group
+Fabio,Alves,fabio.alves@zorg.fr,Zorg Industries,zorg.fr,CEO,Lisboa,industrial manufacturing group
+Gabriela,Alves,gabriela.alves@acme.io,Acme Analytics,acme.io,CTO,São Paulo,B2B SaaS analytics for mid-market finance teams
+Hugo,Alves,hugo.alves@globex.com,Globex Payroll,globex.com,Head of Sales,Rio de Janeiro,B2B payroll software for SMBs
+Iris,Alves,iris.alves@initech.io,Initech Cloud,initech.io,Engineer,Lisboa,B2B cloud cost management platform
+Joao,Alves,joao.alves@umbrella.dev,Umbrella Security,umbrella.dev,Designer,São Paulo,B2B security tooling for DevOps teams
+Karen,Alves,karen.alves@hooli.com,Hooli Data,hooli.com,CEO,Rio de Janeiro,B2B data pipelines for retailers
+Lucas,Alves,lucas.alves@stark.app,Stark Logistics,stark.app,CTO,Lisboa,B2B fleet routing software
+Marina,Alves,marina.alves@wayne.io,Wayne Billing,wayne.io,Head of Sales,São Paulo,B2B billing and invoicing API
+Nuno,Alves,nuno.alves@cyberdyne.ai,Cyberdyne Ops,cyberdyne.ai,Engineer,Rio de Janeiro,B2B incident response automation
+Olga,Alves,olga.alves@soylent.co,Soylent HR,soylent.co,Designer,Lisboa,B2B HR suite for clinics
+Ana,Melo,ana.melo@piedpiper.fm,Pied Piper Music,piedpiper.fm,CEO,São Paulo,consumer music streaming app
+Bruno,Melo,bruno.melo@bluth.shop,Bluth Bananas,bluth.shop,CTO,Rio de Janeiro,consumer frozen banana stands
+Carla,Melo,carla.melo@dunder.store,Dunder Paper,dunder.store,Head of Sales,Lisboa,consumer stationery e-commerce
+Diego,Melo,diego.melo@krusty.food,Krusty Burgers,krusty.food,Engineer,São Paulo,consumer burger delivery app
+Elisa,Melo,elisa.melo@duff.beer,Duff Drinks,duff.beer,Designer,Rio de Janeiro,consumer beverage brand
+Fabio,Melo,fabio.melo@vandelay.trip,Vandelay Travel,vandelay.trip,CEO,Lisboa,consumer travel booking app
+Gabriela,Melo,gabriela.melo@oceanic.air,Oceanic Air,oceanic.air,CTO,São Paulo,consumer airline
+Hugo,Melo,hugo.melo@gringotts.money,Gringotts Wallet,gringotts.money,Head of Sales,Rio de Janeiro,consumer savings wallet
+Iris,Melo,iris.melo@ollivander.toys,Ollivander Wands,ollivander.toys,Engineer,Lisboa,consumer toy store
+Joao,Melo,joao.melo@monsters.agency,Monsters Agency,monsters.agency,Designer,São Paulo,creative services agency
+Karen,Melo,karen.melo@tyrell.consulting,Tyrell Consulting,tyrell.consulting,CEO,Rio de Janeiro,management consulting partners
+Lucas,Melo,lucas.melo@nakatomi.jp,Nakatomi Partners,nakatomi.jp,CTO,Lisboa,real estate holding group
+Marina,Melo,marina.melo@massive.co,Massive Dynamic,massive.co,Head of Sales,São Paulo,research conglomerate
+Nuno,Melo,nuno.melo@aperture.science,Aperture Labs,aperture.science,Engineer,Rio de Janeiro,physics research lab
+Olga,Melo,olga.melo@blackmesa.org,Black Mesa,blackmesa.org,Designer,Lisboa,non-profit research institute
+Ana,Dias,ana.dias@weyland.studio,Weyland Studio,weyland.studio,CEO,São Paulo,film production studio
+Bruno,Dias,bruno.dias@rekall.media,Rekall Media,rekall.media,CTO,Rio de Janeiro,memory tourism media group
+Carla,Dias,carla.dias@zorg.fr,Zorg Industries,zorg.fr,Head of Sales,Lisboa,industrial manufacturing group
+Diego,Dias,diego.dias@acme.io,Acme Analytics,acme.io,Engineer,São Paulo,B2B SaaS analytics for mid-market finance teams
+Elisa,Dias,elisa.dias@globex.com,Globex Payroll,globex.com,Designer,Rio de Janeiro,B2B payroll software for SMBs
+Fabio,Dias,fabio.dias@initech.io,Initech Cloud,initech.io,CEO,Lisboa,B2B cloud cost management platform
+Gabriela,Dias,gabriela.dias@umbrella.dev,Umbrella Security,umbrella.dev,CTO,São Paulo,B2B security tooling for DevOps teams
+Hugo,Dias,hugo.dias@hooli.com,Hooli Data,hooli.com,Head of Sales,Rio de Janeiro,B2B data pipelines for retailers
+Iris,Dias,iris.dias@stark.app,Stark Logistics,stark.app,Engineer,Lisboa,B2B fleet routing software
+Joao,Dias,joao.dias@wayne.io,Wayne Billing,wayne.io,Designer,São Paulo,B2B billing and invoicing API
+Karen,Dias,karen.dias@cyberdyne.ai,Cyberdyne Ops,cyberdyne.ai,CEO,Rio de Janeiro,B2B incident response automation
+Lucas,Dias,lucas.dias@soylent.co,Soylent HR,soylent.co,CTO,Lisboa,B2B HR suite for clinics
+Marina,Dias,marina.dias@piedpiper.fm,Pied Piper Music,piedpiper.fm,Head of Sales,São Paulo,consumer music streaming app
+Nuno,Dias,nuno.dias@bluth.shop,Bluth Bananas,bluth.shop,Engineer,Rio de Janeiro,consumer frozen banana stands
+Olga,Dias,olga.dias@dunder.store,Dunder Paper,dunder.store,Designer,Lisboa,consumer stationery e-commerce
+Ana,Pires,ana.pires@krusty.food,Krusty Burgers,krusty.food,CEO,São Paulo,consumer burger delivery app
+Bruno,Pires,bruno.pires@duff.beer,Duff Drinks,duff.beer,CTO,Rio de Janeiro,consumer beverage brand
+Carla,Pires,carla.pires@vandelay.trip,Vandelay Travel,vandelay.trip,Head of Sales,Lisboa,consumer travel booking app
+Diego,Pires,diego.pires@oceanic.air,Oceanic Air,oceanic.air,Engineer,São Paulo,consumer airline
+Elisa,Pires,elisa.pires@gringotts.money,Gringotts Wallet,gringotts.money,Designer,Rio de Janeiro,consumer savings wallet
+Fabio,Pires,fabio.pires@ollivander.toys,Ollivander Wands,ollivander.toys,CEO,Lisboa,consumer toy store
+Gabriela,Pires,gabriela.pires@monsters.agency,Monsters Agency,monsters.agency,CTO,São Paulo,creative services agency
+Hugo,Pires,hugo.pires@tyrell.consulting,Tyrell Consulting,tyrell.consulting,Head of Sales,Rio de Janeiro,management consulting partners
+Iris,Pires,iris.pires@nakatomi.jp,Nakatomi Partners,nakatomi.jp,Engineer,Lisboa,real estate holding group
+Joao,Pires,joao.pires@massive.co,Massive Dynamic,massive.co,Designer,São Paulo,research conglomerate
+Karen,Pires,karen.pires@aperture.science,Aperture Labs,aperture.science,CEO,Rio de Janeiro,physics research lab
+Lucas,Pires,lucas.pires@blackmesa.org,Black Mesa,blackmesa.org,CTO,Lisboa,non-profit research institute
+Marina,Pires,marina.pires@weyland.studio,Weyland Studio,weyland.studio,Head of Sales,São Paulo,film production studio
+Nuno,Pires,nuno.pires@rekall.media,Rekall Media,rekall.media,Engineer,Rio de Janeiro,memory tourism media group
+Olga,Pires,olga.pires@zorg.fr,Zorg Industries,zorg.fr,Designer,Lisboa,industrial manufacturing group

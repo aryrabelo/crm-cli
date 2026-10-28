@@ -1,18 +1,18 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jdanielnd/crm-cli/internal/csvio"
 	"github.com/jdanielnd/crm-cli/internal/format"
 	"github.com/jdanielnd/crm-cli/internal/model"
+	"github.com/jdanielnd/crm-cli/internal/service"
 	"github.com/jdanielnd/crm-cli/internal/table"
 	"github.com/spf13/cobra"
 )
@@ -56,6 +56,7 @@ var tableImportColumns = []format.ColumnDef{
 	{Header: "Rows", Field: "rows"},
 	{Header: "Created", Field: "created"},
 	{Header: "Updated", Field: "updated"},
+	{Header: "Failed", Field: "failed"},
 	{Header: "New Columns", Field: "new_columns"},
 }
 
@@ -69,7 +70,12 @@ func tableImportCmd() *cobra.Command {
 Every header becomes an input column; rows are appended in file order. With
 --key, a row whose key already exists updates that row instead of adding a
 duplicate (values computed by runs are kept). The key is fixed by the first
-import of a table.`,
+import of a table.
+
+A header error (empty or repeated header, the key column missing from the
+header) fails the import and writes nothing (exit 2). A row error (empty or
+repeated key) is printed on stderr and that row is skipped; the other rows are
+written and the command exits 6. MCP crm_table_import behaves the same way.`,
 		Example: `  crm table import leads.csv --as leads --key email
   cat more.csv | crm table import - --as leads`,
 		Args: cobra.ExactArgs(1),
@@ -94,17 +100,14 @@ import of a table.`,
 				return err
 			}
 			defer db.Close()
-			tx, err := db.BeginTx(cmd.Context(), nil)
-			if err != nil {
-				return fmt.Errorf("begin import: %w", err)
-			}
-			defer func() { _ = tx.Rollback() }()
-			res, err := table.NewStore(tx).Import(cmd.Context(), table.ImportOptions{Name: as, Key: key, Source: source}, parsed)
+			res, err := newService(db).ImportCSV(cmd.Context(), table.ImportOptions{Name: as, Key: key, Source: source}, parsed)
 			if err != nil {
 				return err
 			}
-			if err := tx.Commit(); err != nil {
-				return fmt.Errorf("commit import: %w", err)
+			for _, r := range res.Results {
+				if r.Err != nil {
+					fmt.Fprintf(os.Stderr, "skipped: %s\n", r.Err)
+				}
 			}
 			out := map[string]any{
 				"id":          res.Workspace.ID,
@@ -112,9 +115,17 @@ import of a table.`,
 				"rows":        res.Rows,
 				"created":     res.Created,
 				"updated":     res.Updated,
+				"failed":      res.Failed,
 				"new_columns": len(res.NewColumns),
 			}
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{out}, tableImportColumns, flagQuiet)
+			if err := format.Output(os.Stdout, resolveFormat(), []map[string]any{out}, tableImportColumns, flagQuiet); err != nil {
+				return err
+			}
+			if res.Failed > 0 {
+				return model.NewExitError(model.ErrItemsFailed, "imported %d of %d rows into %s; %d row(s) skipped",
+					res.Created+res.Updated, res.Rows, res.Workspace.Name, res.Failed)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&as, "as", "", "table name (required)")
@@ -150,7 +161,7 @@ func tableListCmd() *cobra.Command {
 			for i, w := range list {
 				data[i] = map[string]any{
 					"id": w.ID, "name": w.Name, "rows": w.Rows, "columns": w.Columns,
-					"key_column": w.KeyColumn, "created_at": w.CreatedAt, "updated_at": w.UpdatedAt,
+					"key_column": nil, "created_at": w.CreatedAt, "updated_at": w.UpdatedAt,
 				}
 				if w.KeyColumn != nil {
 					data[i]["key_column"] = *w.KeyColumn
@@ -168,24 +179,7 @@ func loadView(cmd *cobra.Command, name string, only []string) (*table.Workspace,
 		return nil, nil, err
 	}
 	defer db.Close()
-	ts := table.NewStore(db)
-	ws, err := ts.FindWorkspace(cmd.Context(), name)
-	if err != nil {
-		return nil, nil, err
-	}
-	cols, err := ts.Columns(cmd.Context(), ws.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	filters, err := table.ParseFilters(only, cols)
-	if err != nil {
-		return nil, nil, err
-	}
-	rows, err := ts.Rows(cmd.Context(), ws.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return ws, table.NewView(cols, rows, filters), nil
+	return newService(db).View(cmd.Context(), name, only)
 }
 
 const onlyHelp = `keep rows matching <column><op><value>; op is = != > >= < <= ~ (regex) !~; repeatable (AND). "col!=" keeps non-empty cells`
@@ -212,16 +206,16 @@ terminal, JSON when piped; -f csv|tsv|json to choose.`,
 				defs[i] = format.ColumnDef{Header: h, Field: h}
 			}
 			f := resolveFormat()
+			if f == format.FormatJSON {
+				// Same output as export: object keys in column order.
+				return service.Export(os.Stdout, view, "json")
+			}
 			records := view.Records()
 			data := make([]map[string]any, len(view.Cells))
 			for i := range view.Cells {
 				m := make(map[string]any, len(header))
 				for j, h := range header {
-					if f == format.FormatJSON {
-						m[h] = view.Cells[i][h]
-					} else {
-						m[h] = records[i][j]
-					}
+					m[h] = records[i][j]
 				}
 				data[i] = m
 			}
@@ -249,54 +243,9 @@ in column order.`,
 			if err != nil {
 				return err
 			}
-			switch flagFormat {
-			case "", "csv":
-				return csvio.Write(os.Stdout, ',', view.Header(), view.Records(), csvio.DefaultDialect)
-			case "tsv":
-				return csvio.Write(os.Stdout, '\t', view.Header(), view.Records(), csvio.DefaultDialect)
-			case "json":
-				return writeOrderedJSON(os.Stdout, view)
-			default:
-				return model.NewExitError(model.ErrValidation, "table export supports -f csv, tsv or json")
-			}
+			return service.Export(os.Stdout, view, strings.ToLower(strings.TrimSpace(flagFormat)))
 		},
 	}
 	cmd.Flags().StringArrayVar(&only, "only", nil, onlyHelp)
 	return cmd
-}
-
-// writeOrderedJSON writes the rows as a JSON array of objects whose keys
-// follow the column order.
-func writeOrderedJSON(w io.Writer, view *table.View) error {
-	var buf bytes.Buffer
-	buf.WriteString("[")
-	for i, cells := range view.Cells {
-		if i > 0 {
-			buf.WriteString(",")
-		}
-		buf.WriteString("\n  {")
-		for j, c := range view.Columns {
-			if j > 0 {
-				buf.WriteString(", ")
-			}
-			k, err := json.Marshal(c.Name)
-			if err != nil {
-				return err
-			}
-			v, err := json.Marshal(cells[c.Name])
-			if err != nil {
-				return fmt.Errorf("encode %s: %w", c.Name, err)
-			}
-			buf.Write(k)
-			buf.WriteString(": ")
-			buf.Write(v)
-		}
-		buf.WriteString("}")
-	}
-	if len(view.Cells) > 0 {
-		buf.WriteString("\n")
-	}
-	buf.WriteString("]\n")
-	_, err := w.Write(buf.Bytes())
-	return err
 }

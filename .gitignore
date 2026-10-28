@@ -29,3 +29,4 @@ coverage.html
 
 # Go
 vendor/
+!internal/ui/static/vendor/

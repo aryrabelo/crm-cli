@@ -1,8 +1,11 @@
 package provider
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/model"
 )
@@ -17,6 +20,12 @@ type Registry struct {
 // base URL overrides; pass os.Getenv in production.
 func NewRegistry(client *http.Client, getenv func(string) string) *Registry {
 	return &Registry{client: client, getenv: getenv}
+}
+
+// NewEnvRegistry is the production Registry: real HTTP with a 30s
+// per-request timeout, credentials and URL overrides from the environment.
+func NewEnvRegistry() *Registry {
+	return NewRegistry(&http.Client{Timeout: 30 * time.Second}, os.Getenv)
 }
 
 // URLOverrideEnv is the environment variable that overrides the base URL (or,
@@ -67,12 +76,14 @@ func (r *Registry) Open(cfg *Config) (Adapter, error) {
 		return newJina(r.client, cfg, base("https://r.jina.ai"), token), nil
 	case "github":
 		return newGitHub(r.client, cfg, base("https://api.github.com"), token), nil
-	default: // "http", guaranteed by Validate
+	case "http":
 		tmpl := cfg.Settings.URL
 		if override != "" {
 			tmpl = override
 		}
 		return newHTTP(r.client, cfg, tmpl, token), nil
+	default:
+		return nil, model.NewExitError(model.ErrValidation, "provider %s: no adapter for kind %q", cfg.Name, cfg.Kind)
 	}
 }
 
@@ -121,9 +132,16 @@ func (r *Registry) OpenLLM(cfg *Config) (*LLM, error) {
 	} {
 		switch v := r.getenv(p.env); {
 		case p.set != nil:
-			*p.dst = usdPerMTok(*p.set)
+			c, ok := usdPerMTok(*p.set)
+			if !ok {
+				return nil, model.NewExitError(model.ErrValidation, "provider %s: token price %s is out of range (0 to %g USD per 1M tokens)", cfg.Name, p.flag, MaxPricePerMTok)
+			}
+			*p.dst = c
 		case v != "":
 			c, err := ParseUSD(v)
+			if err == nil && c > Cost(MaxPricePerMTok*1e6) {
+				err = fmt.Errorf("price %q is above %g USD per 1M tokens", v, MaxPricePerMTok)
+			}
 			if err != nil {
 				return nil, model.NewExitError(model.ErrValidation, "%s: %s", p.env, err)
 			}

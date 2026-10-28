@@ -1,0 +1,26 @@
+{
+  "name": "export-filtered",
+  "description": "Get name and email of the 5 people at Globex Payroll.",
+  "setup": {
+    "table": {"name": "leads", "csv": "fixtures/people_135.csv", "key": "email"},
+    "entities": {"type": "person", "csv": "fixtures/people_135.csv"}
+  },
+  "batch": {
+    "steps": [
+      {"tool": "crm_export", "args": {"table": "leads", "filters": ["company=Globex Payroll"],
+        "columns": ["first_name", "last_name", "email"], "format": "csv"}}
+    ],
+    "checks": [
+      {"result": -1, "path": "rows", "equals": 5},
+      {"result": -1, "path": "content", "len": 5}
+    ]
+  },
+  "per_entity": {
+    "steps": [
+      {"tool": "crm_person_search", "args": {"query": "Globex", "limit": 200}}
+    ],
+    "checks": [
+      {"result": -1, "path": "", "len": 5}
+    ]
+  }
+}

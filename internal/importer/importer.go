@@ -328,7 +328,7 @@ func Run(ctx context.Context, db repo.DBTX, opts Options, table *csvio.Table) (*
 			}
 		}
 
-		if err := imports.AddRow(ctx, batch.ID, i+1, id); err != nil {
+		if err := imports.AddRow(ctx, batch.ID, i+1, id, rec); err != nil {
 			return nil, err
 		}
 		res.Actions = append(res.Actions, action)
@@ -377,18 +377,24 @@ func Cell(entityType string, c model.ImportColumn, row *model.EntityRow) string 
 
 // ExportColumns returns the columns for exporting all entities of a type
 // without a source batch: raw core columns, then custom keys. A custom key
-// that collides with a core column name is exported as "custom.<key>".
+// whose header collides with the id, a core column or an earlier custom
+// header is prefixed with "custom." until the header is unique.
 func ExportColumns(entityType string, customKeys []string) []model.ImportColumn {
 	core := model.CoreColumns[entityType]
 	cols := make([]model.ImportColumn, 0, len(core)+len(customKeys))
 	for _, f := range core {
 		cols = append(cols, model.ImportColumn{Header: f, Field: f})
 	}
+	emitted := map[string]bool{"id": true}
+	for _, f := range core {
+		emitted[f] = true
+	}
 	for _, k := range customKeys {
 		h := k
-		if k == "id" || slices.Contains(core, k) {
-			h = "custom." + k
+		for emitted[h] {
+			h = "custom." + h
 		}
+		emitted[h] = true
 		cols = append(cols, model.ImportColumn{Header: h, Field: k, Custom: true})
 	}
 	return cols

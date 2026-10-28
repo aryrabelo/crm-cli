@@ -16,10 +16,14 @@ type Limiter struct {
 
 // NewLimiter creates a Limiter allowing rate calls per second.
 func NewLimiter(rate float64) *Limiter {
-	if rate <= 0 {
+	if !(rate > 0) { // also NaN
 		return &Limiter{}
 	}
-	return &Limiter{interval: time.Duration(float64(time.Second) / rate)}
+	// Clamp to [1ns, 1 day]: a huge rate must not round to "unlimited" and a
+	// tiny one must not overflow time.Duration.
+	interval := float64(time.Second) / rate
+	interval = min(max(interval, 1), float64(24*time.Hour))
+	return &Limiter{interval: time.Duration(interval)}
 }
 
 // Wait blocks until the next call slot or until ctx is done.

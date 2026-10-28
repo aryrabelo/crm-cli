@@ -1,20 +1,13 @@
 package cli
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"os"
-	"slices"
-	"strings"
 
-	"github.com/jdanielnd/crm-cli/internal/column"
 	"github.com/jdanielnd/crm-cli/internal/format"
-	"github.com/jdanielnd/crm-cli/internal/model"
-	"github.com/jdanielnd/crm-cli/internal/provider"
+	"github.com/jdanielnd/crm-cli/internal/service"
 	"github.com/jdanielnd/crm-cli/internal/table"
 	"github.com/jdanielnd/crm-cli/internal/value"
-	"github.com/jdanielnd/crm-cli/internal/waterfall"
 	"github.com/spf13/cobra"
 )
 
@@ -31,30 +24,8 @@ var columnColumns = []format.ColumnDef{
 	{Header: "Column", Field: "name"},
 	{Header: "Type", Field: "type"},
 	{Header: "Definition", Field: "definition"},
-	{Header: "Max Cost/Row", Field: "cost_est"},
+	{Header: "Est. Cost/Row", Field: "cost_est"},
 	{Header: "Filled", Field: "filled"},
-}
-
-// definition summarizes a column config in one line.
-func definition(c *column.Column) string {
-	switch c.Type {
-	case column.Formula:
-		return c.Config.Expr
-	case column.Enrich:
-		s := strings.Join(c.Config.Waterfall, " → ") + " ← " + c.Config.From
-		if c.Config.Field != "" {
-			s += " ." + c.Config.Field
-		}
-		return s
-	case column.AI:
-		s := c.Config.Output + " ← " + strings.Join(c.Config.Waterfall, " → ")
-		if c.Config.Reason != "" {
-			s += " (+ reason in " + c.Config.Reason + ")"
-		}
-		return s
-	default:
-		return ""
-	}
 }
 
 // readPrompt returns the content of the regular file named arg, or arg
@@ -68,85 +39,6 @@ func readPrompt(arg string) (string, error) {
 		return "", fmt.Errorf("read prompt %s: %w", arg, err)
 	}
 	return string(b), nil
-}
-
-// reasonColumn is the default reason column of an ai column (--explain).
-func reasonColumn(name string) string { return name + "_reason" }
-
-// saveColumn adds c (or, with update, redefines the existing column of the
-// same name) in one transaction: the reason input column of an ai column is
-// created when missing (and placed right after a new ai column), c is
-// validated, its providers are opened (so a misconfigured provider fails
-// now, not at run time) and its per-row cost estimate is recorded.
-func saveColumn(ctx context.Context, db *sql.DB, c *column.Column, update bool) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	ts := table.NewStore(tx)
-	cols, err := ts.Columns(ctx, c.WorkspaceID)
-	if err != nil {
-		return err
-	}
-	var newReason *column.Column
-	if r := c.Config.Reason; r != "" {
-		i := slices.IndexFunc(cols, func(o *column.Column) bool { return o.Name == r })
-		switch {
-		case i < 0:
-			newReason = &column.Column{WorkspaceID: c.WorkspaceID, Name: r, Type: column.Input}
-			if err := ts.AddColumn(ctx, newReason); err != nil {
-				return err
-			}
-			cols = append(cols, newReason)
-		case cols[i].Type != column.Input:
-			return model.NewExitError(model.ErrConflict, "reason column %q already exists as a %s column", r, cols[i].Type)
-		}
-	}
-	if err := c.Validate(slices.DeleteFunc(slices.Clone(cols), func(o *column.Column) bool { return update && o.Name == c.Name })); err != nil {
-		return err
-	}
-	if c.Type.Runnable() {
-		wf, _, err := c.Waterfall(ctx, provider.NewStore(tx), newRegistry(), waterfall.NewCache(tx))
-		if err != nil {
-			return err
-		}
-		est, err := wf.Estimate(ctx, provider.Input{Value: c.Config.Prompt}, c.Config.Field, false)
-		if err != nil {
-			return err
-		}
-		c.CostEst = est.Worst
-	}
-	if update {
-		err = ts.UpdateColumn(ctx, c)
-	} else {
-		err = ts.AddColumn(ctx, c)
-	}
-	if err != nil {
-		return err
-	}
-	if newReason != nil && !update {
-		if err := ts.SwapPositions(ctx, newReason, c); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
-}
-
-func columnData(c *column.Column, filled, rows int) map[string]any {
-	return map[string]any{
-		"id":           c.ID,
-		"name":         c.Name,
-		"type":         string(c.Type),
-		"config":       c.Config,
-		"definition":   definition(c),
-		"cost_est":     c.CostEst.String(),
-		"cost_est_usd": c.CostEst.USD(),
-		"filled":       fmt.Sprintf("%d/%d", filled, rows),
-	}
 }
 
 func columnAddCmd() *cobra.Command {
@@ -168,7 +60,7 @@ func columnAddCmd() *cobra.Command {
   ai       filled by crm run with an llm answer per row: --prompt is a file
            (or inline text) whose {{column}} placeholders are replaced by the
            row's cells; --output types the answer: text, score:MIN-MAX,
-           enum:a|b|c or bool. --explain also stores a 1–2 sentence reason in
+           enum:a|b|c or bool. --explain also stores a short model-written reason in
            <name>_reason. --waterfall picks the llm providers (default llm;
            see crm provider set llm).`,
 		Example: `  crm column add leads profile --type enrich --waterfall github --from login
@@ -177,54 +69,27 @@ func columnAddCmd() *cobra.Command {
   crm column add leads fit --type ai --prompt files/fit.md --output score:0-100 --explain`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			t, err := column.ParseType(typ)
-			if err != nil {
-				return err
-			}
-			if t != column.AI && (prompt != "" || output != "" || explain) {
-				return model.NewExitError(model.ErrValidation, "--prompt, --output and --explain are for --type ai")
-			}
 			db, err := openDB()
 			if err != nil {
 				return err
 			}
 			defer db.Close()
-			ctx := cmd.Context()
-			ws, err := table.NewStore(db).FindWorkspace(ctx, args[0])
+			spec := service.ColumnSpec{Name: args[1], Type: typ, Waterfall: wf, From: from, Field: field, Expr: expr,
+				Output: output, Explain: explain}
+			if prompt != "" {
+				if spec.Prompt, err = readPrompt(prompt); err != nil {
+					return err
+				}
+			}
+			c, err := newService(db).AddColumn(cmd.Context(), args[0], spec)
 			if err != nil {
 				return err
 			}
-			c := &column.Column{
-				WorkspaceID: ws.ID,
-				Name:        args[1],
-				Type:        t,
-				Config:      column.Config{Expr: expr, Waterfall: wf, From: from, Field: field, Output: output},
-			}
-			switch t {
-			case column.Enrich:
-				if c.Config.From == "" && ws.KeyColumn != nil {
-					c.Config.From = *ws.KeyColumn
-				}
-			case column.AI:
-				if prompt != "" {
-					if c.Config.Prompt, err = readPrompt(prompt); err != nil {
-						return err
-					}
-				}
-				if c.Config.Output == "" {
-					c.Config.Output = column.OutputText
-				}
-				if len(c.Config.Waterfall) == 0 {
-					c.Config.Waterfall = []string{"llm"}
-				}
-				if explain {
-					c.Config.Reason = reasonColumn(c.Name)
-				}
-			}
-			if err := saveColumn(ctx, db, c, false); err != nil {
+			_, view, err := newService(db).View(cmd.Context(), args[0], nil)
+			if err != nil {
 				return err
 			}
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{columnData(c, 0, 0)}, columnColumns[:4], flagQuiet)
+			return format.Output(os.Stdout, resolveFormat(), []map[string]any{service.ColumnData(c, filledCells(view, c.Name), len(view.Cells))}, columnColumns[:4], flagQuiet)
 		},
 	}
 	f := cmd.Flags()
@@ -235,7 +100,7 @@ func columnAddCmd() *cobra.Command {
 	f.StringVar(&expr, "expr", "", "formula: template with {{column}} placeholders")
 	f.StringVar(&prompt, "prompt", "", "ai: prompt file (.md) or inline text with {{column}} placeholders")
 	f.StringVar(&output, "output", "", "ai: answer type: text (default), score:MIN-MAX, enum:a|b|c or bool")
-	f.BoolVar(&explain, "explain", false, "ai: also store a 1–2 sentence reason in <name>_reason")
+	f.BoolVar(&explain, "explain", false, "ai: also store a short model-written reason in <name>_reason")
 	return cmd
 }
 
@@ -245,23 +110,35 @@ func columnListCmd() *cobra.Command {
 		Short: "List the columns of a table with how many rows are filled",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, view, err := loadView(cmd, args[0], nil)
+			db, err := openDB()
 			if err != nil {
 				return err
 			}
+			defer db.Close()
+			svc := newService(db)
+			_, view, err := svc.View(cmd.Context(), args[0], nil)
+			if err != nil {
+				return err
+			}
+			svc.RefreshCostEst(cmd.Context(), view.Columns)
 			data := make([]map[string]any, len(view.Columns))
 			for i, c := range view.Columns {
-				filled := 0
-				for _, cells := range view.Cells {
-					if !value.Empty(cells[c.Name]) {
-						filled++
-					}
-				}
-				data[i] = columnData(c, filled, len(view.Cells))
+				data[i] = service.ColumnData(c, filledCells(view, c.Name), len(view.Cells))
 			}
 			return format.Output(os.Stdout, resolveFormat(), data, columnColumns, flagQuiet)
 		},
 	}
+}
+
+// filledCells counts the rows of view whose cell in the named column is set.
+func filledCells(view *table.View, name string) int {
+	filled := 0
+	for _, cells := range view.Cells {
+		if !value.Empty(cells[name]) {
+			filled++
+		}
+	}
+	return filled
 }
 
 func columnRmCmd() *cobra.Command {
