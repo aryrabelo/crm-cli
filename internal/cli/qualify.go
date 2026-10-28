@@ -114,7 +114,7 @@ decision counts, tokens in/out and cost vs budget, and exits like crm run:
 				}
 				fmt.Fprintln(os.Stderr)
 				fmt.Fprintf(os.Stderr, "prompt fields: %s (each cut to %d characters)\n", strings.Join(res.Fields, ", "), res.FieldLimit)
-				return printEstimate(res.Estimate, run.Options{Budget: opts.Budget, BudgetSet: opts.BudgetSet})
+				return printEstimate(res.Estimate, opts.Budget, opts.BudgetSet)
 			}
 			printRunLine(res.Run)
 			r, st := res.Run.Run, res.Run.Run.Stats

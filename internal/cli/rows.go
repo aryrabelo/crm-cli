@@ -31,7 +31,10 @@ func rowsCmd() *cobra.Command {
 Without --import: one row per record (ordered by ID) with an "id" column, the
 core fields, then every custom field key. With --import <batch-id>: exactly the
 columns and row order of that import batch; -f csv reproduces the original
-file (header text, BOM, line endings and trailing newline included).`,
+file (header text, BOM, line endings and trailing newline included) as long
+as the imported records are unchanged. The cells are read from the CURRENT
+records, not a snapshot: a later import or edit changes them, and archived
+records are omitted.`,
 		Example: `  crm rows person -f csv
   crm rows person --import 3 -f csv > roundtrip.csv
   crm rows org --only industry=SaaS -f json`,
