@@ -56,33 +56,44 @@ func newHTTP(client *http.Client, cfg *Config, urlTmpl, token string) *httpAdapt
 func (h *httpAdapter) Estimate(Input) Cost { return h.price }
 
 func (h *httpAdapter) Key(in Input) Hash {
-	return hashKey("http", h.method, h.urlTmpl, h.bodyTmpl, h.path, strings.TrimSpace(in.Value))
+	return hashKey("http", h.method, h.urlTmpl, h.bodyTmpl, h.path, h.errorPath, h.okPath, strings.TrimSpace(in.Value))
 }
 
 // responseError reports a 2xx response that the provider marks as an error
 // (error_path set, or ok_path not set), or nil. The call was served, so it is
 // still charged; the answer is never cached.
-func (h *httpAdapter) responseError(doc any) error {
+// The message quotes provider-controlled text, so it is redacted against req.
+func (h *httpAdapter) responseError(doc any, req *http.Request) error {
 	if h.errorPath != "" {
 		if v, ok := value.Lookup(doc, h.errorPath); ok && truthy(v) {
-			return &Error{Msg: fmt.Sprintf("%s: error in response (%s: %s)", h.name, h.errorPath, value.Text(v))}
+			return &Error{Msg: redactRequest(fmt.Sprintf("%s: error in response (%s: %s)", h.name, h.errorPath, value.Text(v)), req)}
 		}
 	}
 	if h.okPath != "" {
 		if v, ok := value.Lookup(doc, h.okPath); !ok || !truthy(v) {
-			return &Error{Msg: fmt.Sprintf("%s: response not ok (%s: %s)", h.name, h.okPath, value.Text(v))}
+			return &Error{Msg: redactRequest(fmt.Sprintf("%s: response not ok (%s: %s)", h.name, h.okPath, value.Text(v)), req)}
 		}
 	}
 	return nil
 }
 
-// truthy reports whether v is set: not empty, false or 0.
+// truthy reports whether v is set: not empty, false or 0 (also as the strings
+// "false" and "0").
 func truthy(v any) bool {
 	switch x := v.(type) {
 	case bool:
 		return x
 	case float64:
 		return x != 0
+	case json.Number:
+		f, err := x.Float64()
+		return err != nil || f != 0
+	case string:
+		switch strings.ToLower(strings.TrimSpace(x)) {
+		case "", "false", "0", "no", "null":
+			return false
+		}
+		return true
 	default:
 		return !value.Empty(v)
 	}
@@ -128,9 +139,10 @@ func (h *httpAdapter) Enrich(ctx context.Context, in Input) (Output, Cost, error
 	}
 	doc, err := value.Decode(resp)
 	if err != nil {
-		return nil, 0, &Error{Msg: fmt.Sprintf("%s: decode response: %v", h.name, err)}
+		// The call was served, so it is charged like an error_path hit.
+		return nil, h.price, &Error{Msg: fmt.Sprintf("%s: decode response: %v", h.name, err)}
 	}
-	if err := h.responseError(doc); err != nil {
+	if err := h.responseError(doc, req); err != nil {
 		return nil, h.price, err
 	}
 	selected, ok := value.Lookup(doc, h.path)

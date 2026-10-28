@@ -333,3 +333,68 @@ func (s *Store) Finish(ctx context.Context, runID int64, owner string, status St
 	}
 	return oneRow(res, runID)
 }
+
+// Latest returns the newest run of workspace workspaceID (nil when it has
+// none).
+func (s *Store) Latest(ctx context.Context, workspaceID int64) (*Run, error) {
+	return s.newest(ctx, "r.workspace_id = ?", workspaceID)
+}
+
+// newest returns the newest run matching where (nil when none does).
+func (s *Store) newest(ctx context.Context, where string, args ...any) (*Run, error) {
+	r, err := scanRun(s.db.QueryRowContext(ctx,
+		"SELECT "+runColumns+" FROM runs r JOIN workspaces w ON w.id = r.workspace_id WHERE "+where+
+			" ORDER BY r.id DESC LIMIT 1", args...).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("newest run: %w", err)
+	}
+	return r, nil
+}
+
+// CellState is the newest run item of one row × column of a workspace.
+type CellState struct {
+	RowID    int64
+	Column   string
+	RunID    int64
+	Status   string
+	Error    *string
+	Provider *string
+	CacheHit bool
+	Cost     provider.Cost
+	// Uncertain is the part of Cost not confirmed by a response.
+	Uncertain provider.Cost
+}
+
+// CellStates returns, for every row × active column of workspace
+// workspaceID that some run covered, the item of the newest such run. A run
+// item's row belongs to its run's workspace, so the rows select the items
+// (idx_run_items_cell) instead of every item of every run.
+func (s *Store) CellStates(ctx context.Context, workspaceID int64) ([]*CellState, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT i.row_id, c.name, i.run_id, i.status, i.error, i.provider, i.cache_hit, i.cost_micros, i.uncertain_micros
+		 FROM run_items i JOIN workspace_columns c ON c.id = i.column_id
+		 WHERE c.archived = 0 AND i.id IN (
+		   SELECT MAX(i2.id) FROM run_items i2
+		   WHERE i2.row_id IN (SELECT id FROM workspace_rows WHERE workspace_id = ?)
+		   GROUP BY i2.row_id, i2.column_id)`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("cell states: %w", err)
+	}
+	defer rows.Close()
+	var out []*CellState
+	for rows.Next() {
+		var c CellState
+		if err := rows.Scan(&c.RowID, &c.Column, &c.RunID, &c.Status, &c.Error, &c.Provider, &c.CacheHit,
+			&c.Cost, &c.Uncertain); err != nil {
+			return nil, fmt.Errorf("scan cell state: %w", err)
+		}
+		out = append(out, &c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate cell states: %w", err)
+	}
+	return out, nil
+}

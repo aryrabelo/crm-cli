@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jdanielnd/crm-cli/internal/csvio"
 	"github.com/jdanielnd/crm-cli/internal/format"
@@ -160,7 +161,7 @@ func tableListCmd() *cobra.Command {
 			for i, w := range list {
 				data[i] = map[string]any{
 					"id": w.ID, "name": w.Name, "rows": w.Rows, "columns": w.Columns,
-					"key_column": w.KeyColumn, "created_at": w.CreatedAt, "updated_at": w.UpdatedAt,
+					"key_column": nil, "created_at": w.CreatedAt, "updated_at": w.UpdatedAt,
 				}
 				if w.KeyColumn != nil {
 					data[i]["key_column"] = *w.KeyColumn
@@ -205,16 +206,16 @@ terminal, JSON when piped; -f csv|tsv|json to choose.`,
 				defs[i] = format.ColumnDef{Header: h, Field: h}
 			}
 			f := resolveFormat()
+			if f == format.FormatJSON {
+				// Same output as export: object keys in column order.
+				return service.Export(os.Stdout, view, "json")
+			}
 			records := view.Records()
 			data := make([]map[string]any, len(view.Cells))
 			for i := range view.Cells {
 				m := make(map[string]any, len(header))
 				for j, h := range header {
-					if f == format.FormatJSON {
-						m[h] = view.Cells[i][h]
-					} else {
-						m[h] = records[i][j]
-					}
+					m[h] = records[i][j]
 				}
 				data[i] = m
 			}
@@ -242,7 +243,7 @@ in column order.`,
 			if err != nil {
 				return err
 			}
-			return service.Export(os.Stdout, view, flagFormat)
+			return service.Export(os.Stdout, view, strings.ToLower(strings.TrimSpace(flagFormat)))
 		},
 	}
 	cmd.Flags().StringArrayVar(&only, "only", nil, onlyHelp)

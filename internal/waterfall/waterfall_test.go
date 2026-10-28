@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/db"
 	"github.com/jdanielnd/crm-cli/internal/provider"
@@ -113,3 +116,68 @@ func TestRun_HaltStopsFallthrough(t *testing.T) {
 	assert.True(t, errors.Is(err, waterfall.ErrHalt))
 	assert.Zero(t, a.calls+b.calls)
 }
+
+// Concurrent rows with the same input must pay for one call.
+func TestRun_ConcurrentIdenticalInputsCallOnce(t *testing.T) {
+	var calls atomic.Int32
+	a := &gated{out: `{"company":"Acme"}`, calls: &calls, release: make(chan struct{})}
+	wf := newWaterfall(t, waterfall.Step{Name: "a", Adapter: a})
+	const n = 8
+	var wg sync.WaitGroup
+	results := make([]waterfall.Result, n)
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := wf.Run(context.Background(), provider.Input{Value: "x"}, "company", direct)
+			assert.NoError(t, err)
+			results[i] = res
+		}()
+	}
+	time.Sleep(100 * time.Millisecond) // let every row miss the cache and queue
+	close(a.release)
+	wg.Wait()
+	assert.EqualValues(t, 1, calls.Load())
+	paid := 0
+	for _, r := range results {
+		assert.Equal(t, "Acme", r.Value)
+		if r.Cost > 0 {
+			paid++
+		}
+	}
+	assert.Equal(t, 1, paid)
+}
+
+// An interrupt after a paid call must not drop its answer from the cache.
+func TestRun_PaidAnswerIsCachedDespiteCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &fake{out: `{"company":"Acme"}`, price: 5}
+	wf := newWaterfall(t, waterfall.Step{Name: "a", Adapter: a})
+	res, err := wf.Run(ctx, provider.Input{Value: "x"}, "company",
+		func(ctx context.Context, s waterfall.Step, in provider.Input) (provider.Output, provider.Cost, int, error) {
+			out, cost, err := s.Adapter.Enrich(ctx, in)
+			cancel() // interrupt lands right after the paid answer
+			return out, cost, 1, err
+		})
+	require.NoError(t, err)
+	assert.Equal(t, "Acme", res.Value)
+
+	res, err = wf.Run(context.Background(), provider.Input{Value: "x"}, "company", direct)
+	require.NoError(t, err)
+	assert.True(t, res.CacheHit)
+	assert.Equal(t, 1, a.calls)
+}
+
+type gated struct {
+	out     string
+	calls   *atomic.Int32
+	release chan struct{}
+}
+
+func (g *gated) Enrich(context.Context, provider.Input) (provider.Output, provider.Cost, error) {
+	g.calls.Add(1)
+	<-g.release
+	return provider.Output(g.out), 3, nil
+}
+func (g *gated) Estimate(provider.Input) provider.Cost { return 3 }
+func (g *gated) Key(in provider.Input) provider.Hash   { return provider.Hash(in.Value) }

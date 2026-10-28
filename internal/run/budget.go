@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -41,10 +42,22 @@ func (b *budget) settle(reserved, actual provider.Cost) {
 	b.spent += actual
 }
 
-const maxBackoff = 30 * time.Second
+const (
+	maxBackoff = 30 * time.Second
+	// maxRetryAfter bounds a provider's Retry-After hint, which is honoured
+	// beyond maxBackoff so a 429 is never retried before the server allows.
+	maxRetryAfter = 10 * time.Minute
+	jitterFrac    = 0.2
+)
 
-// backoff is the delay before retry number attempt (0-based): base·2^attempt,
-// raised to the provider's Retry-After hint, capped at maxBackoff.
+// jitter returns a factor in [1-jitterFrac, 1+jitterFrac]; a variable so
+// tests can pin it.
+var jitter = func() float64 { return 1 + jitterFrac*(2*rand.Float64()-1) }
+
+// backoff is the delay before retry number attempt (0-based): base·2^attempt
+// with ±20% jitter (so workers that hit the same 429 do not retry in
+// lockstep), capped at maxBackoff, then raised to the provider's Retry-After
+// hint (itself capped at maxRetryAfter).
 func backoff(base time.Duration, attempt int, hint time.Duration) time.Duration {
 	d := base
 	for range attempt {
@@ -53,8 +66,8 @@ func backoff(base time.Duration, attempt int, hint time.Duration) time.Duration 
 			break
 		}
 	}
-	d = max(d, hint)
-	return min(d, maxBackoff)
+	d = min(time.Duration(float64(d)*jitter()), maxBackoff)
+	return max(d, min(hint, maxRetryAfter))
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

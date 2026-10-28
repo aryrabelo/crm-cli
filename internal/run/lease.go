@@ -40,26 +40,34 @@ func unixMS(t time.Time) int64 { return t.UnixMilli() }
 // of several concurrent claims succeeds; the others get a conflict (exit 4)
 // naming the holder.
 func (s *Store) Claim(ctx context.Context, runID int64, owner string, budget provider.Cost, now time.Time, stale time.Duration) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE runs SET owner = ?, heartbeat_at = ?, budget_micros = ?, status = ?, finished_at = NULL
-		 WHERE id = ? AND (owner IS NULL OR heartbeat_at IS NULL OR heartbeat_at < ?)`,
-		owner, unixMS(now), budget, StatusRunning, runID, unixMS(now.Add(-stale)))
-	if err != nil {
-		return fmt.Errorf("claim run %d: %w", runID, err)
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("claim run %d: %w", runID, err)
-	} else if n == 1 {
-		return nil
-	}
 	var holder sql.NullString
 	var beat sql.NullInt64
-	err = s.db.QueryRowContext(ctx, "SELECT owner, heartbeat_at FROM runs WHERE id = ?", runID).Scan(&holder, &beat)
-	if errors.Is(err, sql.ErrNoRows) {
-		return model.NewExitError(model.ErrNotFound, "run %d not found", runID)
-	}
-	if err != nil {
-		return fmt.Errorf("read run %d lease: %w", runID, err)
+	// A holder can release between the failed claim and the read of its
+	// lease; an ownerless row is claimable, so claim again instead of
+	// reporting a conflict with nobody.
+	for range 3 {
+		res, err := s.db.ExecContext(ctx,
+			`UPDATE runs SET owner = ?, heartbeat_at = ?, budget_micros = ?, status = ?, finished_at = NULL
+			 WHERE id = ? AND (owner IS NULL OR heartbeat_at IS NULL OR heartbeat_at < ?)`,
+			owner, unixMS(now), budget, StatusRunning, runID, unixMS(now.Add(-stale)))
+		if err != nil {
+			return fmt.Errorf("claim run %d: %w", runID, err)
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return fmt.Errorf("claim run %d: %w", runID, err)
+		} else if n == 1 {
+			return nil
+		}
+		err = s.db.QueryRowContext(ctx, "SELECT owner, heartbeat_at FROM runs WHERE id = ?", runID).Scan(&holder, &beat)
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.NewExitError(model.ErrNotFound, "run %d not found", runID)
+		}
+		if err != nil {
+			return fmt.Errorf("read run %d lease: %w", runID, err)
+		}
+		if holder.Valid && beat.Valid {
+			break
+		}
 	}
 	age := now.Sub(time.UnixMilli(beat.Int64)).Round(time.Second)
 	return model.NewExitError(model.ErrConflict,
@@ -87,6 +95,14 @@ func (s *Store) Release(ctx context.Context, runID int64, owner string) error {
 		return fmt.Errorf("release run %d: %w", runID, err)
 	}
 	return nil
+}
+
+// Live returns the newest run of workspace workspaceID that an executor
+// holds now, in this process or another (crm run in a terminal): running,
+// with a heartbeat newer than stale. nil when there is none.
+func (s *Store) Live(ctx context.Context, workspaceID int64, now time.Time, stale time.Duration) (*Run, error) {
+	return s.newest(ctx, "r.workspace_id = ? AND r.status = ? AND r.heartbeat_at >= ?",
+		workspaceID, StatusRunning, unixMS(now.Add(-stale)))
 }
 
 func oneRow(res sql.Result, runID int64) error {

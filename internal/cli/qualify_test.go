@@ -46,6 +46,7 @@ func newQualifier(t *testing.T) *fakeQualifier {
 		}
 		assert.Equal(t, "fake-model", req.Model)
 		user := req.Messages[1].Content
+		assert.Contains(t, user, "B2B software companies selling to SMBs", "the prompt carries the criteria text")
 		company, desc := "", ""
 		for _, line := range strings.Split(user, "\n") {
 			if c, ok := strings.CutPrefix(line, "- company: "); ok {
@@ -172,6 +173,10 @@ func TestQualify_Acceptance(t *testing.T) {
 	assert.Equal(t, []string{"Co00", "co00.com", "B2B payroll software for SMBs", "yes", "The description says Co00 sells B2B software."}, recs.Rows[0])
 	assert.Equal(t, "no", recs.Rows[1][3])
 	assert.Equal(t, "maybe", recs.Rows[2][3])
+	for _, row := range recs.Rows[:19] {
+		assert.Contains(t, row[4], "The description", "row %s has a reason", row[0])
+		assert.Contains(t, row[4], row[0], "the reason mentions its company")
+	}
 	assert.Equal(t, []string{"Broken Co", "broken.com", "B2B tooling", "", ""}, recs.Rows[19])
 	out, _, _ = crmEnv(t, env, dbPath, "table", "export", "leads", "--only", "qualified=yes", "-f", "tsv")
 	assert.Equal(t, 8, strings.Count(out, "\n"), "header + 7 qualified rows")
@@ -205,7 +210,10 @@ func TestQualify_PromptFieldsSkipBlobs(t *testing.T) {
 		var req struct {
 			Messages []struct{ Content string } `json:"messages"`
 		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
 		prompts = append(prompts, req.Messages[len(req.Messages)-1].Content)
 		mu.Unlock()
@@ -330,4 +338,47 @@ func TestColumnAdd_AIValidationAndTypedValues(t *testing.T) {
 	_, _, code = crmEnv(t, env, dbPath, "column", "add", "leads", "x", "--type", "enrich", "--waterfall", "llm")
 	assert.Equal(t, 2, code, "llm providers serve ai columns only")
 	assert.EqualValues(t, 2, calls.Load())
+}
+
+// Cubic #4380796974: a reason column named like the table key would overwrite
+// the imported keys, so qualify --explain and column add --explain refuse it.
+func TestExplain_ReasonColumnCannotBeTheKey(t *testing.T) {
+	env := []string{"CRM_LLM_BASE_URL=http://127.0.0.1:1/v1", "CRM_LLM_API_KEY=sk-test", "CRM_LLM_MODEL=m",
+		"CRM_LLM_PRICE_IN=1", "CRM_LLM_PRICE_OUT=2"}
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	src := writeFile(t, dir, "k.csv", "qualified_reason,company\nkeep me,Acme\n")
+	criteria := writeFile(t, dir, "icp.md", "B2B only\n")
+	_, stderr, code := crmEnv(t, env, dbPath, "table", "import", src, "--as", "k", "--key", "qualified_reason")
+	require.Equal(t, 0, code, stderr)
+
+	for _, args := range [][]string{
+		{"qualify", "k", "--criteria", criteria, "--explain", "--dry-run"},
+		{"qualify", "k", "--criteria", criteria, "--explain"},
+		{"column", "add", "k", "qualified", "--type", "ai", "--prompt", "Is {{company}} B2B?", "--explain"},
+	} {
+		_, stderr, code = crmEnv(t, env, dbPath, args...)
+		assert.Equal(t, 2, code, "%v: %s", args, stderr)
+		assert.Contains(t, stderr, "key column")
+	}
+}
+
+// Cubic #4380796953: columns that cannot be placeholders are reported, not
+// silently dropped from the default fields.
+func TestQualify_BracedColumnNamesAreRejected(t *testing.T) {
+	env := []string{"CRM_LLM_BASE_URL=http://127.0.0.1:1/v1", "CRM_LLM_API_KEY=sk-test", "CRM_LLM_MODEL=m",
+		"CRM_LLM_PRICE_IN=1", "CRM_LLM_PRICE_OUT=2"}
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	src := writeFile(t, dir, "b.csv", "company,{{odd}}\nAcme,x\n")
+	criteria := writeFile(t, dir, "icp.md", "B2B only\n")
+	_, stderr, code := crmEnv(t, env, dbPath, "table", "import", src, "--as", "b", "--key", "company")
+	require.Equal(t, 0, code, stderr)
+
+	_, stderr, code = crmEnv(t, env, dbPath, "qualify", "b", "--criteria", criteria, "--dry-run")
+	assert.Equal(t, 2, code, stderr)
+	assert.Contains(t, stderr, "{{odd}}")
+	assert.Contains(t, stderr, "--fields")
+	_, stderr, code = crmEnv(t, env, dbPath, "qualify", "b", "--criteria", criteria, "--fields", "company", "--dry-run")
+	assert.Equal(t, 0, code, stderr)
 }

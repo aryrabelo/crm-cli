@@ -25,6 +25,7 @@ func registerMCPCommands(rootCmd *cobra.Command) {
 
 func mcpServeCmd() *cobra.Command {
 	var addr, token string
+	var tlsOpt tlsFlags
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the MCP server (stdio, or streamable HTTP with --http)",
@@ -32,7 +33,8 @@ func mcpServeCmd() *cobra.Command {
 
 Without --http it speaks JSON-RPC on stdin/stdout (what desktop clients
 spawn). With --http ADDR it serves the streamable HTTP transport at
-http://ADDR` + crmmcp.HTTPPath + `, and every request needs
+http(s)://ADDR` + crmmcp.HTTPPath + ` (https when --tls-cert and
+--tls-key are given), and every request needs
 "Authorization: Bearer <token>":
 
   - --token (or ` + mcpTokenEnv + `) sets the token. Without one, a loopback
@@ -42,12 +44,16 @@ http://ADDR` + crmmcp.HTTPPath + `, and every request needs
     localhost or [::1] with the bound port are accepted, so a web page cannot
     reach the server through DNS rebinding. Requests carrying a foreign
     Origin get 403 on every address.
-  - Request bodies are capped at 16 MiB. The transport is plain HTTP: put a
-    TLS reverse proxy in front before listening beyond this machine.`,
+  - Request bodies are capped at 16 MiB.
+  - --tls-cert and --tls-key serve HTTPS. Plain HTTP sends the token in clear
+    text, so a bind beyond this machine refuses to start without TLS unless
+    --behind-tls-proxy says a TLS reverse proxy in front terminates HTTPS.`,
 		Example: `  crm mcp serve
   crm mcp serve --http 127.0.0.1:8765          # prints a generated token on stderr
   CRM_MCP_TOKEN=s3cret crm mcp serve --http 127.0.0.1:8765
-  curl -H "Authorization: Bearer $CRM_MCP_TOKEN" -H 'Content-Type: application/json' \
+  export CRM_MCP_TOKEN=$(openssl rand -hex 32)   # exported, so the client can send it too
+  crm mcp serve --http :8765 --tls-cert crm.pem --tls-key crm.key
+  curl -H "Authorization: Bearer s3cret" -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' http://127.0.0.1:8765/mcp \
     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'`,
 		Args: cobra.NoArgs,
@@ -55,24 +61,29 @@ http://ADDR` + crmmcp.HTTPPath + `, and every request needs
 			if addr == "" && cmd.Flags().Changed("token") {
 				return model.NewExitError(model.ErrValidation, "--token needs --http (stdio has no auth)")
 			}
-			if token == "" {
-				token = os.Getenv(mcpTokenEnv)
-			}
 			generated := false
+			var err error
 			if addr != "" {
 				if _, _, err := net.SplitHostPort(addr); err != nil {
 					return model.NewExitError(model.ErrValidation, "--http %q: want HOST:PORT or :PORT", addr)
 				}
-				if token == "" && !httpguard.IsLoopback(addr) {
-					return model.NewExitError(model.ErrValidation,
-						"--http %s listens beyond this machine: set --token or %s (or bind 127.0.0.1)", addr, mcpTokenEnv)
+				if token, generated, err = resolveHTTPToken(addr, "--http", token, mcpTokenEnv); err != nil {
+					return err
 				}
-				if token == "" {
-					t, err := httpguard.NewToken()
-					if err != nil {
-						return err
-					}
-					token, generated = t, true
+			}
+			var serveOpts []httpguard.ServeOption
+			scheme := "http"
+			if addr == "" {
+				if tlsOpt.cert != "" || tlsOpt.key != "" || tlsOpt.behindProxy {
+					return model.NewExitError(model.ErrValidation, "--tls-cert, --tls-key and --behind-tls-proxy need --http")
+				}
+			} else {
+				var isTLS bool
+				if serveOpts, isTLS, err = tlsOpt.serveOptions(addr, "--http"); err != nil {
+					return err
+				}
+				if isTLS {
+					scheme = "https"
 				}
 			}
 			db, err := openDB()
@@ -86,14 +97,15 @@ http://ADDR` + crmmcp.HTTPPath + `, and every request needs
 				return s.ServeStdio(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout())
 			}
 			return s.ServeHTTP(cmd.Context(), addr, token, func(a net.Addr) {
-				fmt.Fprintf(os.Stderr, "crm mcp: serving streamable HTTP on http://%s%s (bearer token required)\n", a, crmmcp.HTTPPath)
+				fmt.Fprintf(os.Stderr, "crm mcp: serving streamable HTTP on %s://%s%s (bearer token required)\n", scheme, a, crmmcp.HTTPPath)
 				if generated {
 					fmt.Fprintf(os.Stderr, "crm mcp: no --token or %s given; generated token for this session:\n    Authorization: Bearer %s\n", mcpTokenEnv, token)
 				}
-			})
+			}, serveOpts...)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "http", "", "serve streamable HTTP on HOST:PORT instead of stdio")
 	cmd.Flags().StringVar(&token, "token", "", "bearer token required on HTTP requests (default $"+mcpTokenEnv+", else generated on loopback)")
+	tlsOpt.register(cmd.Flags())
 	return cmd
 }

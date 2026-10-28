@@ -24,7 +24,7 @@ var columnColumns = []format.ColumnDef{
 	{Header: "Column", Field: "name"},
 	{Header: "Type", Field: "type"},
 	{Header: "Definition", Field: "definition"},
-	{Header: "Max Cost/Row", Field: "cost_est"},
+	{Header: "Est. Cost/Row", Field: "cost_est"},
 	{Header: "Filled", Field: "filled"},
 }
 
@@ -60,7 +60,7 @@ func columnAddCmd() *cobra.Command {
   ai       filled by crm run with an llm answer per row: --prompt is a file
            (or inline text) whose {{column}} placeholders are replaced by the
            row's cells; --output types the answer: text, score:MIN-MAX,
-           enum:a|b|c or bool. --explain also stores a 1–2 sentence reason in
+           enum:a|b|c or bool. --explain also stores a short model-written reason in
            <name>_reason. --waterfall picks the llm providers (default llm;
            see crm provider set llm).`,
 		Example: `  crm column add leads profile --type enrich --waterfall github --from login
@@ -85,7 +85,11 @@ func columnAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return format.Output(os.Stdout, resolveFormat(), []map[string]any{service.ColumnData(c, 0, 0)}, columnColumns[:4], flagQuiet)
+			_, view, err := newService(db).View(cmd.Context(), args[0], nil)
+			if err != nil {
+				return err
+			}
+			return format.Output(os.Stdout, resolveFormat(), []map[string]any{service.ColumnData(c, filledCells(view, c.Name), len(view.Cells))}, columnColumns[:4], flagQuiet)
 		},
 	}
 	f := cmd.Flags()
@@ -96,7 +100,7 @@ func columnAddCmd() *cobra.Command {
 	f.StringVar(&expr, "expr", "", "formula: template with {{column}} placeholders")
 	f.StringVar(&prompt, "prompt", "", "ai: prompt file (.md) or inline text with {{column}} placeholders")
 	f.StringVar(&output, "output", "", "ai: answer type: text (default), score:MIN-MAX, enum:a|b|c or bool")
-	f.BoolVar(&explain, "explain", false, "ai: also store a 1–2 sentence reason in <name>_reason")
+	f.BoolVar(&explain, "explain", false, "ai: also store a short model-written reason in <name>_reason")
 	return cmd
 }
 
@@ -106,23 +110,35 @@ func columnListCmd() *cobra.Command {
 		Short: "List the columns of a table with how many rows are filled",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, view, err := loadView(cmd, args[0], nil)
+			db, err := openDB()
 			if err != nil {
 				return err
 			}
+			defer db.Close()
+			svc := newService(db)
+			_, view, err := svc.View(cmd.Context(), args[0], nil)
+			if err != nil {
+				return err
+			}
+			svc.RefreshCostEst(cmd.Context(), view.Columns)
 			data := make([]map[string]any, len(view.Columns))
 			for i, c := range view.Columns {
-				filled := 0
-				for _, cells := range view.Cells {
-					if !value.Empty(cells[c.Name]) {
-						filled++
-					}
-				}
-				data[i] = service.ColumnData(c, filled, len(view.Cells))
+				data[i] = service.ColumnData(c, filledCells(view, c.Name), len(view.Cells))
 			}
 			return format.Output(os.Stdout, resolveFormat(), data, columnColumns, flagQuiet)
 		},
 	}
+}
+
+// filledCells counts the rows of view whose cell in the named column is set.
+func filledCells(view *table.View, name string) int {
+	filled := 0
+	for _, cells := range view.Cells {
+		if !value.Empty(cells[name]) {
+			filled++
+		}
+	}
+	return filled
 }
 
 func columnRmCmd() *cobra.Command {

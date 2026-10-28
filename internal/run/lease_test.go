@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -131,4 +132,63 @@ func TestLease_LostLeaseStopsTheRun(t *testing.T) {
 	assert.Equal(t, 0, e.count(t, "SELECT COUNT(*) FROM run_items WHERE status != 'pending'"), "no checkpoint after the takeover")
 	assert.Equal(t, 0, e.count(t, "SELECT spent_micros FROM runs"))
 	assert.Equal(t, 1, e.count(t, "SELECT COUNT(*) FROM runs WHERE owner = 'thief:1:x'"), "the new holder keeps the run")
+}
+
+// Cubic #4380602357: a fatal error mid-run names the interrupted run and the
+// --resume command, and still unwraps to the cause.
+func TestExecute_FatalErrorNamesRunToResume(t *testing.T) {
+	e := setup(t, 2)
+	api := newAPI(t, func(w http.ResponseWriter, q string) { json200(w, `{"v":"`+q+`"}`) })
+	e.provider(t, "p", api, "v", 1000)
+	e.enrich(t, "v", "p")
+	ctx := context.Background()
+	r, err := e.engine.Start(ctx, run.Options{Table: "leads", Columns: []string{"v"}, Budget: 10_000, BudgetSet: true})
+	require.NoError(t, err)
+	_, err = e.db.Exec("CREATE TRIGGER boom BEFORE UPDATE ON run_items BEGIN SELECT RAISE(ABORT, 'disk on fire'); END")
+	require.NoError(t, err)
+
+	_, err = e.engine.Execute(ctx, run.Options{Resume: r.ID, Concurrency: 1})
+	require.Error(t, err)
+	var re *run.RunError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, r.ID, re.ID)
+	assert.Contains(t, err.Error(), "disk on fire")
+	assert.Contains(t, err.Error(), fmt.Sprintf("crm run --resume %d", r.ID))
+	assert.Equal(t, 1, e.count(t, "SELECT COUNT(*) FROM runs WHERE status = 'interrupted'"))
+}
+
+// Cubic #4390699930: CellStates reads the newest item per cell through
+// idx_run_items_cell, scoped to the workspace's rows.
+func TestCellStates_NewestItemPerCellUsesIndex(t *testing.T) {
+	e := setup(t, 2)
+	api := newAPI(t, func(w http.ResponseWriter, q string) { json200(w, `{"v":"`+q+`"}`) })
+	e.provider(t, "p", api, "v", 0)
+	e.enrich(t, "v", "p")
+	ctx := context.Background()
+	var last int64
+	for range 2 {
+		res, err := e.engine.Execute(ctx, run.Options{Table: "leads", Columns: []string{"v"}, Concurrency: 1})
+		require.NoError(t, err)
+		last = res.Run.ID
+	}
+	var wsID int64
+	require.NoError(t, e.db.QueryRow("SELECT id FROM workspaces").Scan(&wsID))
+	states, err := run.NewStore(e.db).CellStates(ctx, wsID)
+	require.NoError(t, err)
+	require.Len(t, states, 2)
+	for _, st := range states {
+		assert.Equal(t, last, st.RunID, "the newest run wins")
+	}
+	var plan string
+	rows, err := e.db.Query(`EXPLAIN QUERY PLAN SELECT MAX(id) FROM run_items
+		WHERE row_id IN (SELECT id FROM workspace_rows WHERE workspace_id = ?) GROUP BY row_id, column_id`, wsID)
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var a, b, c int
+		var detail string
+		require.NoError(t, rows.Scan(&a, &b, &c, &detail))
+		plan += detail + "\n"
+	}
+	assert.Contains(t, plan, "idx_run_items_cell")
 }

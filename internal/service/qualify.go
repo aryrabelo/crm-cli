@@ -30,7 +30,7 @@ func qualifyPrompt(criteria string, fields []string, limit int) string {
 	var b strings.Builder
 	b.WriteString(`Decide whether this row matches the criteria below. Answer "yes" when the row clearly matches, ` +
 		`"no" when it clearly does not, and "maybe" when the row lacks the information to decide.` + "\n\n## Criteria\n\n")
-	b.WriteString(strings.TrimSpace(criteria))
+	b.WriteString(literalBraces(strings.TrimSpace(criteria)))
 	fmt.Fprintf(&b, "\n\n## Row\n\nEach field is cut to %d characters; a value ending in \"…\" was cut.\n\n", limit)
 	for _, f := range fields {
 		fmt.Fprintf(&b, "- %s: {{%s}}\n", f, f)
@@ -38,13 +38,25 @@ func qualifyPrompt(criteria string, fields []string, limit int) string {
 	return b.String()
 }
 
+// literalBraces defuses "{{" and "}}" in user text ("{ {", "} }") so the ai
+// template engine does not take it for a column placeholder.
+func literalBraces(s string) string {
+	for strings.Contains(s, "{{") {
+		s = strings.ReplaceAll(s, "{{", "{ {")
+	}
+	for strings.Contains(s, "}}") {
+		s = strings.ReplaceAll(s, "}}", "} }")
+	}
+	return s
+}
+
 // qualifyFields picks the prompt fields of the qualify decision column name.
 // explicit (--fields) is used as given (duplicates dropped); it may not name
-// the decision column or its reason column. Otherwise the default is the
+// the decision column or, with explain, its reason column. Otherwise the default is the
 // input and formula columns plus enrich columns that keep one value
 // (--field): ai columns, the reason columns of ai columns and raw enrich
 // answers (whole provider JSON, possibly megabytes) are left out.
-func qualifyFields(cols []*column.Column, name string, explicit []string) ([]string, error) {
+func qualifyFields(cols []*column.Column, name string, explain bool, explicit []string) ([]string, error) {
 	if len(explicit) > 0 {
 		var fields []string
 		for _, f := range explicit {
@@ -52,7 +64,7 @@ func qualifyFields(cols []*column.Column, name string, explicit []string) ([]str
 			switch {
 			case f == "":
 				return nil, model.NewExitError(model.ErrValidation, "--fields has an empty name")
-			case f == name || f == ReasonColumn(name):
+			case f == name || (explain && f == ReasonColumn(name)):
 				return nil, model.NewExitError(model.ErrValidation, "--fields cannot include the decision column %q or its reason column", name)
 			case strings.Contains(f, "{{") || strings.Contains(f, "}}"):
 				return nil, model.NewExitError(model.ErrValidation, "--fields: %q is not a column name", f)
@@ -63,21 +75,34 @@ func qualifyFields(cols []*column.Column, name string, explicit []string) ([]str
 		}
 		return fields, nil
 	}
-	reasons := map[string]bool{ReasonColumn(name): true}
+	// The reason column is only an output (and so left out) when it is being
+	// generated; otherwise a column of that name is ordinary row data.
+	reasons := map[string]bool{}
+	if explain {
+		reasons[ReasonColumn(name)] = true
+	}
 	for _, o := range cols {
 		if o.Type == column.AI && o.Config.Reason != "" {
 			reasons[o.Config.Reason] = true
 		}
 	}
-	var fields []string
+	var fields, braced []string
 	for _, o := range cols {
-		if o.Name == name || reasons[o.Name] || strings.Contains(o.Name, "{{") || strings.Contains(o.Name, "}}") {
+		if o.Name == name || reasons[o.Name] {
 			continue
 		}
-		switch {
-		case o.Type == column.Input, o.Type == column.Formula, o.Type == column.Enrich && o.Config.Field != "":
-			fields = append(fields, o.Name)
+		if o.Type != column.Input && o.Type != column.Formula && (o.Type != column.Enrich || o.Config.Field == "") {
+			continue
 		}
+		if strings.Contains(o.Name, "{{") || strings.Contains(o.Name, "}}") {
+			braced = append(braced, o.Name)
+			continue
+		}
+		fields = append(fields, o.Name)
+	}
+	if len(braced) > 0 {
+		return nil, model.NewExitError(model.ErrValidation,
+			"column(s) %s contain {{ or }} and cannot be prompt placeholders; pick the others with --fields a,b", strings.Join(braced, ", "))
 	}
 	if len(fields) == 0 {
 		return nil, model.NewExitError(model.ErrValidation,
@@ -178,7 +203,10 @@ func (s *Service) Qualify(ctx context.Context, opts QualifyOptions) (*QualifyRes
 		}
 		c.ID = o.ID
 	}
-	if res.Fields, err = qualifyFields(cols, name, opts.Fields); err != nil {
+	if res.Fields, err = qualifyFields(cols, name, opts.Explain, opts.Fields); err != nil {
+		return nil, err
+	}
+	if err := checkReasonNotKey(ws, c); err != nil {
 		return nil, err
 	}
 	c.Config.Prompt = qualifyPrompt(opts.Criteria, res.Fields, opts.FieldLimit)

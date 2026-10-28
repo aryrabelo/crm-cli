@@ -24,6 +24,7 @@ func TestMCPServeHelp(t *testing.T) {
 }
 
 func TestMCPServe_HTTPFlags(t *testing.T) {
+	t.Setenv("CRM_MCP_TOKEN", "") // an inherited token would let the non-loopback cases start a server
 	dbPath := filepath.Join(t.TempDir(), "crm.db")
 	cases := []struct {
 		name string
@@ -32,8 +33,13 @@ func TestMCPServe_HTTPFlags(t *testing.T) {
 	}{
 		{"non-loopback needs a token", []string{"--http", "0.0.0.0:0"}, "listens beyond this machine"},
 		{"all interfaces needs a token", []string{"--http", ":0"}, "listens beyond this machine"},
+		{"short token beyond loopback", []string{"--http", "0.0.0.0:0", "--token", "x"}, "at least 32 characters"},
 		{"token needs http", []string{"--token", "x"}, "--token needs --http"},
 		{"bad address", []string{"--http", "8765"}, "want HOST:PORT"},
+		{"plain http beyond loopback", []string{"--http", "0.0.0.0:0", "--token", strings.Repeat("a", 32)}, "clear text"},
+		{"cert without key", []string{"--http", "127.0.0.1:0", "--tls-cert", "c.pem"}, "go together"},
+		{"tls needs http", []string{"--tls-cert", "c.pem", "--tls-key", "k.pem"}, "need --http"},
+		{"unreadable tls files", []string{"--http", "127.0.0.1:0", "--tls-cert", "nope.pem", "--tls-key", "nope.key"}, "--tls-cert/--tls-key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

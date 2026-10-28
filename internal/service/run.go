@@ -17,13 +17,22 @@ func (s *Service) RunStatus(ctx context.Context, id int64) (*run.Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := rs.Stats(ctx, id)
-	if err != nil {
+	if err := withLiveStats(ctx, rs, r); err != nil {
 		return nil, err
+	}
+	return r, nil
+}
+
+// withLiveStats replaces the stored stats of r with its current item counts
+// (keeping the recorded duration).
+func withLiveStats(ctx context.Context, rs *run.Store, r *run.Run) error {
+	st, err := rs.Stats(ctx, r.ID)
+	if err != nil {
+		return err
 	}
 	st.DurationMS = r.Stats.DurationMS
 	r.Stats = st
-	return r, nil
+	return nil
 }
 
 // RunItems returns every row × column item of run id.

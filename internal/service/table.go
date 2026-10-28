@@ -55,6 +55,11 @@ func (s *Service) UpsertRows(ctx context.Context, opts table.ImportOptions, colu
 	return res, err
 }
 
+// Tables lists every table with its row and column counts.
+func (s *Service) Tables(ctx context.Context) ([]*table.Summary, error) {
+	return table.NewStore(s.db).ListWorkspaces(ctx)
+}
+
 // View returns the rows of table name that match every only filter, with
 // formula columns evaluated.
 func (s *Service) View(ctx context.Context, name string, only []string) (*table.Workspace, *table.View, error) {
@@ -127,10 +132,12 @@ func (s *Service) Query(ctx context.Context, opts QueryOptions) (*QueryResult, e
 	end := min(opts.Offset+opts.Limit, len(view.Rows))
 	for i := opts.Offset; i < end; i++ {
 		m := make(map[string]any, len(view.Columns)+1)
-		m["_row"] = view.Rows[i].Position
 		for _, c := range view.Columns {
 			m[c.Name] = view.Cells[i][c.Name]
 		}
+		// Set last so a column that happens to be named "_row" cannot hide
+		// the documented row position.
+		m["_row"] = view.Rows[i].Position
 		res.Rows = append(res.Rows, m)
 	}
 	return res, nil

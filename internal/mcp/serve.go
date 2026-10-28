@@ -3,15 +3,13 @@ package mcp
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	"github.com/jdanielnd/crm-cli/internal/provider"
+	"github.com/jdanielnd/crm-cli/internal/run"
 	"github.com/jdanielnd/crm-cli/internal/service"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -24,7 +22,7 @@ const HTTPPath = "/mcp"
 type Server struct {
 	mcp    *server.MCPServer
 	svc    *service.Service
-	runs   *runTracker
+	runs   *run.Tracker
 	entity map[string]bool
 }
 
@@ -53,7 +51,7 @@ func New(db *sql.DB, version string, opts ...Option) *Server {
 	s := &Server{
 		mcp:    server.NewMCPServer("crm", version, server.WithToolCapabilities(false)),
 		svc:    service.New(db, o.registry),
-		runs:   newRunTracker(),
+		runs:   run.NewTracker(),
 		entity: map[string]bool{},
 	}
 	registerEntityTools(s.mcp, db)
@@ -72,7 +70,7 @@ func (s *Server) IsEntityTool(name string) bool { return s.entity[name] }
 
 // Close interrupts the runs started with wait=false (they stay resumable)
 // and waits for them to record their state.
-func (s *Server) Close() { s.runs.close() }
+func (s *Server) Close() { s.runs.Close() }
 
 // ServeStdio serves JSON-RPC on in/out until ctx is cancelled or in closes.
 func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) error {
@@ -95,34 +93,6 @@ func (s *Server) Handler(guard httpguard.Config) (http.Handler, error) {
 // shuts down gracefully. token is required. On a loopback address only
 // loopback Host and Origin values are accepted (DNS rebinding). ready
 // (optional) receives the bound address once listening.
-func (s *Server) ServeHTTP(ctx context.Context, addr, token string, ready func(net.Addr)) error {
-	if token == "" {
-		return errors.New("mcp: the HTTP transport requires a bearer token")
-	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", addr, err)
-	}
-	h, err := s.Handler(httpguard.ForListener(token, ln))
-	if err != nil {
-		_ = ln.Close()
-		return err
-	}
-	srv := httpguard.NewServer(h)
-	if ready != nil {
-		ready(ln.Addr())
-	}
-	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
-	select {
-	case <-ctx.Done():
-		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		return srv.Shutdown(shutdown)
-	case err := <-errc:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	}
+func (s *Server) ServeHTTP(ctx context.Context, addr, token string, ready func(net.Addr), opts ...httpguard.ServeOption) error {
+	return httpguard.Serve(ctx, addr, token, s.Handler, ready, opts...)
 }
