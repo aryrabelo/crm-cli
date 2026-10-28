@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -89,6 +90,9 @@ func ParseAge(s string) (time.Duration, error) {
 		if err != nil || n < 0 {
 			return 0, fmt.Errorf("invalid duration %q (use e.g. 30d, 12h or 0)", s)
 		}
+		if int64(n) > math.MaxInt64/int64(24*time.Hour) {
+			return 0, fmt.Errorf("invalid duration %q: too large", s)
+		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	d, err := time.ParseDuration(s)
@@ -97,6 +101,19 @@ func ParseAge(s string) (time.Duration, error) {
 	}
 	return d, nil
 }
+
+// Accepted per-provider rate limits, in calls per second (0 is unlimited).
+const (
+	MinRate = 1e-6
+	MaxRate = 1e6
+)
+
+// MaxLLMTokens caps an llm provider's max_tokens.
+const MaxLLMTokens = 1 << 20
+
+// validName keeps URLOverrideEnv collision-free: '-' is the only character
+// it rewrites, so names that differ never share an environment variable.
+var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // Config is one row of the providers table.
 type Config struct {
@@ -175,8 +192,11 @@ func (c *Config) Validate() error {
 	if !slices.Contains(Kinds(), c.Kind) {
 		return model.NewExitError(model.ErrValidation, "provider %s: unknown kind %q (use one of %v)", c.Name, c.Kind, Kinds())
 	}
-	if c.Rate < 0 {
-		return model.NewExitError(model.ErrValidation, "provider %s: rate must be >= 0", c.Name)
+	if !validName.MatchString(c.Name) {
+		return model.NewExitError(model.ErrValidation, "provider name %q: use lowercase letters, digits and '-' (it names the %s_... environment variable)", c.Name, "CRM_PROVIDER")
+	}
+	if math.IsNaN(c.Rate) || math.IsInf(c.Rate, 0) || c.Rate < 0 || c.Rate > MaxRate || (c.Rate > 0 && c.Rate < MinRate) {
+		return model.NewExitError(model.ErrValidation, "provider %s: rate must be 0 (unlimited) or between %g and %g calls per second", c.Name, MinRate, MaxRate)
 	}
 	if c.Price < 0 {
 		return model.NewExitError(model.ErrValidation, "provider %s: price must be >= 0", c.Name)
@@ -189,6 +209,9 @@ func (c *Config) Validate() error {
 	}
 	switch c.Kind {
 	case "exa":
+		if c.AuthRef == "" {
+			return model.NewExitError(model.ErrValidation, "provider %s: exa providers need an API key (--auth-env NAME)", c.Name)
+		}
 		if e := c.Settings.Endpoint; e != "" && e != "search" && e != "contents" {
 			return model.NewExitError(model.ErrValidation, "provider %s: exa endpoint must be search or contents", c.Name)
 		}
@@ -205,12 +228,15 @@ func (c *Config) Validate() error {
 			return model.NewExitError(model.ErrValidation, "provider %s: llm providers are priced per token (--price-in, --price-out), not per call", c.Name)
 		}
 		for _, p := range []*float64{c.Settings.PriceInPerMTok, c.Settings.PriceOutPerMTok} {
-			if p != nil && (*p < 0 || math.IsNaN(*p) || math.IsInf(*p, 0)) {
-				return model.NewExitError(model.ErrValidation, "provider %s: token prices must be >= 0", c.Name)
+			if p == nil {
+				continue
+			}
+			if _, ok := usdPerMTok(*p); !ok {
+				return model.NewExitError(model.ErrValidation, "provider %s: token prices must be between 0 and %g USD per 1M tokens", c.Name, MaxPricePerMTok)
 			}
 		}
-		if c.Settings.MaxTokens < 0 {
-			return model.NewExitError(model.ErrValidation, "provider %s: max tokens must be >= 0", c.Name)
+		if c.Settings.MaxTokens < 0 || c.Settings.MaxTokens > MaxLLMTokens {
+			return model.NewExitError(model.ErrValidation, "provider %s: max tokens must be between 0 and %d", c.Name, MaxLLMTokens)
 		}
 	}
 	return nil

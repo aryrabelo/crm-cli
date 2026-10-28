@@ -1,8 +1,10 @@
 // Package provider defines the enrichment adapter contract, the provider
 // configuration store and the built-in adapters (exa, jina, github, http).
 //
-// A new provider is one file: a type implementing Adapter plus a case in
-// Registry.Open.
+// Adding a provider kind touches: the adapter file (a type implementing
+// Adapter), Kinds and Settings in config.go, the kind's checks in
+// Config.Validate, a case in Registry.Open (or Registry.OpenLLM), and the
+// crm provider set flags in internal/cli.
 package provider
 
 import (
@@ -41,10 +43,47 @@ func (c Cost) String() string {
 // ParseUSD parses a dollar amount ("2", "0.005", "$1.50") into a Cost.
 func ParseUSD(s string) (Cost, error) {
 	f, err := strconv.ParseFloat(strings.TrimPrefix(strings.TrimSpace(s), "$"), 64)
-	if err != nil || f < 0 || math.IsInf(f, 0) || math.IsNaN(f) {
+	if err != nil {
 		return 0, fmt.Errorf("invalid USD amount %q", s)
 	}
-	return Cost(math.Round(f * 1e6)), nil
+	c, ok := microUSD(f)
+	if !ok {
+		return 0, fmt.Errorf("invalid USD amount %q", s)
+	}
+	return c, nil
+}
+
+// maxCost is the largest representable Cost; sums and products saturate at it.
+const maxCost = Cost(math.MaxInt64)
+
+// microUSD scales a dollar amount to micro-USD. ok is false for negative,
+// non-finite and out-of-range amounts.
+func microUSD(f float64) (c Cost, ok bool) {
+	scaled := math.Round(f * 1e6)
+	// float64(MaxInt64) rounds up to 2^63, which is itself out of range.
+	if math.IsNaN(scaled) || scaled < 0 || scaled >= float64(math.MaxInt64) {
+		return 0, false
+	}
+	return Cost(scaled), true
+}
+
+// mulCost returns n*c, saturating at maxCost. n and c are non-negative.
+func mulCost(n int64, c Cost) Cost {
+	if n <= 0 || c <= 0 {
+		return 0
+	}
+	if int64(c) > math.MaxInt64/n {
+		return maxCost
+	}
+	return Cost(n * int64(c))
+}
+
+// addCost returns a+b, saturating at maxCost. a and b are non-negative.
+func addCost(a, b Cost) Cost {
+	if a > maxCost-b {
+		return maxCost
+	}
+	return a + b
 }
 
 // Hash identifies an input for caching: same hash, same provider → same answer.
