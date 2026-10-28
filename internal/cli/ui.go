@@ -81,6 +81,16 @@ started in another terminal shows up on the page while it executes.`,
 			s := ui.New(db, provider.NewEnvRegistry())
 			defer s.Close()
 			return s.Serve(cmd.Context(), addr, token, func(a net.Addr) {
+				if tlsOpt.behindProxy && !isTLS {
+					// The backend is plain HTTP: its URL would send the token in
+					// clear text, so open the proxy's HTTPS address instead.
+					fmt.Fprintf(os.Stderr, "crm ui: serving plain HTTP on %s for a TLS proxy (Ctrl-C to stop)\n", browserHost(a))
+					fmt.Fprintf(os.Stderr, "crm ui: open the proxy's HTTPS address with this fragment (it carries the session token; keep it private):\n    https://<proxy-host>/%s\n", pageFragment(token))
+					if open {
+						fmt.Fprintln(os.Stderr, "crm ui: --open skipped: the backend URL is plain HTTP; use the proxy's HTTPS address")
+					}
+					return
+				}
 				url := pageURL(scheme, a, token)
 				fmt.Fprintf(os.Stderr, "crm ui: serving on %s://%s (Ctrl-C to stop)\n", scheme, browserHost(a))
 				fmt.Fprintf(os.Stderr, "crm ui: open this URL (it carries the session token; keep it private):\n    %s\n", url)
@@ -114,7 +124,12 @@ func browserHost(a net.Addr) string {
 
 // pageURL is the page URL with the token in its fragment.
 func pageURL(scheme string, a net.Addr, token string) string {
-	return scheme + "://" + browserHost(a) + "/#token=" + strings.ReplaceAll(url.QueryEscape(token), "+", "%20")
+	return scheme + "://" + browserHost(a) + "/" + pageFragment(token)
+}
+
+// pageFragment is the #token= fragment of the page URL.
+func pageFragment(token string) string {
+	return "#token=" + strings.ReplaceAll(url.QueryEscape(token), "+", "%20")
 }
 
 func openBrowser(target string) error {
