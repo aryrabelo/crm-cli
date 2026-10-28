@@ -1,36 +1,47 @@
 package cli
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
+	"math"
 	"os"
-	"time"
+	"regexp"
 
 	"github.com/jdanielnd/crm-cli/internal/format"
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/jdanielnd/crm-cli/internal/provider"
+	"github.com/jdanielnd/crm-cli/internal/service"
 	"github.com/spf13/cobra"
 )
 
-// newRegistry builds the provider registry used by commands: real HTTP with
-// a per-request timeout, credentials and URL overrides from the environment.
-func newRegistry() *provider.Registry {
-	return provider.NewRegistry(&http.Client{Timeout: 30 * time.Second}, os.Getenv)
+// newService builds the data-plane service used by commands, with the
+// production provider registry (credentials and URL overrides from the
+// environment).
+func newService(db *sql.DB) *service.Service {
+	return service.New(db, provider.NewEnvRegistry())
 }
 
 func registerProviderCommands(rootCmd *cobra.Command) {
 	cmd := &cobra.Command{
 		Use:   "provider",
-		Short: "Enrichment providers: prices, credentials, endpoints",
-		Long: `Enrichment providers used by enrich columns.
+		Short: "Providers: prices, credentials, endpoints, llm models",
+		Long: `Providers used by enrich columns (waterfalls) and ai columns (llm).
 
-Built in: exa (search), exa-contents, jina (reader), github (users/orgs). Add
-any JSON API as a generic http provider with a URL template and a JSON path.
+Built in: exa (search), exa-contents, jina (reader), github (users/orgs) and
+llm, an OpenAI-compatible chat completions endpoint for ai columns. Add any
+JSON API as a generic http provider with a URL template and a JSON path, or
+more llm providers (other models/gateways) with --kind llm.
 Credentials are read from the environment variable named by --auth-env and
 never stored. CRM_PROVIDER_<NAME>_URL overrides a provider's base URL (or the
-URL template of an http provider).`,
+URL template of an http provider).
+
+llm providers: base URL from --base-url, else CRM_LLM_BASE_URL, else
+https://api.openai.com/v1; key from CRM_LLM_API_KEY (the built-in llm's
+--auth-env); model from --model or CRM_LLM_MODEL; prices in USD per 1M
+tokens from --price-in/--price-out or CRM_LLM_PRICE_IN/CRM_LLM_PRICE_OUT
+(required; 0 for a local model or a subscription gateway).`,
 	}
 	cmd.AddCommand(providerListCmd(), providerSetCmd())
 	rootCmd.AddCommand(cmd)
@@ -47,13 +58,38 @@ var providerColumns = []format.ColumnDef{
 	{Header: "Config", Field: "config_text"},
 }
 
+// priceText is the price column: per call, or per 1M tokens for llm providers.
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func priceText(c *provider.Config) string {
+	if c.Kind != "llm" {
+		return c.Price.String()
+	}
+	usd := func(p *float64, env string) string {
+		switch {
+		case p != nil:
+			return provider.Cost(math.Round(*p * 1e6)).String()
+		case os.Getenv(env) != "":
+			c, err := provider.ParseUSD(os.Getenv(env))
+			if err != nil {
+				return "invalid (env)"
+			}
+			return c.String() + " (env)"
+		default:
+			return "unset"
+		}
+	}
+	return "in " + usd(c.Settings.PriceInPerMTok, provider.EnvLLMPriceIn) +
+		" / out " + usd(c.Settings.PriceOutPerMTok, provider.EnvLLMPriceOut) + " per 1M tok"
+}
+
 func providerData(c *provider.Config) map[string]any {
 	cfg, _ := json.Marshal(c.Settings)
 	return map[string]any{
 		"id":          c.ID,
 		"name":        c.Name,
 		"kind":        c.Kind,
-		"price":       c.Price.String(),
+		"price":       priceText(c),
 		"price_usd":   c.Price.USD(),
 		"rate":        c.Rate,
 		"auth_ref":    c.AuthRef,
@@ -89,9 +125,10 @@ func providerListCmd() *cobra.Command {
 }
 
 func providerSetCmd() *cobra.Command {
-	var kind, price, authEnv, baseURL, endpoint, resource, url, method, body, path, authHeader string
+	var kind, price, authEnv, baseURL, endpoint, resource, url, method, body, path, authHeader, modelName, priceIn, priceOut string
+	var errorPath, okPath, cacheTTL string
 	var rate float64
-	var numResults int
+	var numResults, maxTokens int
 	var enabled bool
 	cmd := &cobra.Command{
 		Use:   "set <name>",
@@ -100,11 +137,24 @@ func providerSetCmd() *cobra.Command {
 
 Generic http providers: --url is a template where {{input}} becomes the
 query-escaped input; --body (JSON, sent with POST) gets the JSON-escaped input;
---path is the dotted path of the answer inside the response ("data.0.email").`,
+--path is the dotted path of the answer inside the response ("data.0.email").
+An API that reports errors with HTTP 200 needs --error-path (the response is an
+error when that path is set: "error") or --ok-path (an error unless that path
+is set: "success"); such responses are charged but never cached.
+
+Every provider's answers are cached for --cache-ttl (default 30d; "0" never
+expires); older entries are fetched (and paid) again. See crm cache clear.
+
+llm providers (OpenAI-compatible chat completions): --model, --price-in and
+--price-out (USD per 1M prompt/completion tokens), --max-tokens (per call,
+default 512), --base-url (default $CRM_LLM_BASE_URL or the OpenAI API).`,
 		Example: `  crm provider set exa --price 0.005
   crm provider set github --auth-env GITHUB_TOKEN --rate 1
   crm provider set clearbit --kind http --url "https://api.example.com/v1/company?domain={{input}}" \
-    --path data --auth-env EXAMPLE_KEY --price 0.01`,
+    --path data --error-path error --auth-env EXAMPLE_KEY --price 0.01 --cache-ttl 7d
+  crm provider set llm --model gpt-4o-mini --price-in 0.15 --price-out 0.60
+  crm provider set local --kind llm --base-url http://127.0.0.1:4000/v1 --model qwen3 \
+    --price-in 0 --price-out 0 --auth-env LOCAL_LLM_KEY`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := openDB()
@@ -136,6 +186,9 @@ query-escaped input; --body (JSON, sent with POST) gets the JSON-escaped input;
 				cfg.Rate = rate
 			}
 			if f.Changed("auth-env") {
+				if authEnv != "" && !envNameRE.MatchString(authEnv) {
+					return model.NewExitError(model.ErrValidation, "--auth-env takes the NAME of an environment variable (e.g. MINE_KEY), not the secret itself")
+				}
 				cfg.AuthRef = authEnv
 			}
 			if f.Changed("enabled") {
@@ -147,6 +200,8 @@ query-escaped input; --body (JSON, sent with POST) gets the JSON-escaped input;
 				"resource": {&s.Resource, &resource}, "url": {&s.URL, &url},
 				"method": {&s.Method, &method}, "body": {&s.Body, &body},
 				"path": {&s.Path, &path}, "auth-header": {&s.AuthHeader, &authHeader},
+				"error-path": {&s.ErrorPath, &errorPath}, "ok-path": {&s.OKPath, &okPath},
+				"cache-ttl": {&s.CacheTTL, &cacheTTL},
 			} {
 				if f.Changed(flag) {
 					*pair[0] = *pair[1]
@@ -154,6 +209,26 @@ query-escaped input; --body (JSON, sent with POST) gets the JSON-escaped input;
 			}
 			if f.Changed("num-results") {
 				s.NumResults = numResults
+			}
+			if f.Changed("max-tokens") {
+				s.MaxTokens = maxTokens
+			}
+			if f.Changed("model") {
+				s.Model = modelName
+			}
+			for flag, pair := range map[string]struct {
+				dst **float64
+				src string
+			}{"price-in": {&s.PriceInPerMTok, priceIn}, "price-out": {&s.PriceOutPerMTok, priceOut}} {
+				if !f.Changed(flag) {
+					continue
+				}
+				c, err := provider.ParseUSD(pair.src)
+				if err != nil {
+					return model.NewExitError(model.ErrValidation, "--%s: %s", flag, err)
+				}
+				usd := c.USD()
+				*pair.dst = &usd
 			}
 			if err := store.Save(cmd.Context(), cfg); err != nil {
 				return err
@@ -169,12 +244,12 @@ query-escaped input; --body (JSON, sent with POST) gets the JSON-escaped input;
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&kind, "kind", "", "adapter: exa, jina, github or http")
+	f.StringVar(&kind, "kind", "", "adapter: exa, jina, github, http or llm")
 	f.StringVar(&price, "price", "", "USD per call (e.g. 0.005)")
 	f.Float64Var(&rate, "rate", 0, "max requests per second (0 = unlimited)")
 	f.StringVar(&authEnv, "auth-env", "", "environment variable holding the credential")
 	f.BoolVar(&enabled, "enabled", true, "enable (--enabled=false disables) the provider")
-	f.StringVar(&baseURL, "base-url", "", "API root override (exa, jina, github)")
+	f.StringVar(&baseURL, "base-url", "", "API root override (exa, jina, github, llm)")
 	f.StringVar(&endpoint, "endpoint", "", "exa: search or contents")
 	f.IntVar(&numResults, "num-results", 0, "exa search: number of results")
 	f.StringVar(&resource, "resource", "", "github: users or orgs")
@@ -183,5 +258,12 @@ query-escaped input; --body (JSON, sent with POST) gets the JSON-escaped input;
 	f.StringVar(&body, "body", "", "http: JSON body template with {{input}}")
 	f.StringVar(&path, "path", "", "http: dotted path of the answer in the response")
 	f.StringVar(&authHeader, "auth-header", "", "http: header for the credential (default Authorization: Bearer)")
+	f.StringVar(&errorPath, "error-path", "", "http: dotted path that, when set in a 2xx response, makes it an error")
+	f.StringVar(&okPath, "ok-path", "", "http: dotted path that must be set (not empty, false or 0) in a 2xx response")
+	f.StringVar(&cacheTTL, "cache-ttl", "", `how long cached answers are reused, e.g. 7d or 12h ("0" never expires; default 30d)`)
+	f.StringVar(&modelName, "model", "", "llm: model name (default $CRM_LLM_MODEL)")
+	f.StringVar(&priceIn, "price-in", "", "llm: USD per 1M prompt tokens (0 for local/subscription)")
+	f.StringVar(&priceOut, "price-out", "", "llm: USD per 1M completion tokens (0 for local/subscription)")
+	f.IntVar(&maxTokens, "max-tokens", 0, "llm: max completion tokens per call (default 512)")
 	return cmd
 }

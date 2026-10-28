@@ -36,16 +36,22 @@ const (
 
 // Stats aggregates the items of a run.
 type Stats struct {
-	Items      int            `json:"items"`
-	OK         int            `json:"ok"`
-	Empty      int            `json:"empty"`
-	Failed     int            `json:"failed"`
-	Skipped    int            `json:"skipped"`
-	Pending    int            `json:"pending"`
-	CacheHits  int            `json:"cache_hits"`
-	Calls      int            `json:"calls"`
-	DurationMS int64          `json:"duration_ms"`
-	Providers  map[string]int `json:"providers"`
+	Items     int   `json:"items"`
+	OK        int   `json:"ok"`
+	Empty     int   `json:"empty"`
+	Failed    int   `json:"failed"`
+	Skipped   int   `json:"skipped"`
+	Pending   int   `json:"pending"`
+	CacheHits int   `json:"cache_hits"`
+	Calls     int   `json:"calls"`
+	TokensIn  int64 `json:"tokens_in"`
+	TokensOut int64 `json:"tokens_out"`
+	// Uncertain counts the items with an unconfirmed cost; UncertainMicros
+	// is that cost (included in the run's spent total).
+	Uncertain       int            `json:"uncertain,omitempty"`
+	UncertainMicros int64          `json:"uncertain_micros,omitempty"`
+	DurationMS      int64          `json:"duration_ms"`
+	Providers       map[string]int `json:"providers"`
 }
 
 // Run is one batch execution over rows × columns.
@@ -80,6 +86,12 @@ type Item struct {
 	Error       *string       `json:"error"`
 	MS          int64         `json:"ms"`
 	Cost        provider.Cost `json:"-"`
+	// Uncertain is the part of Cost that is not confirmed: calls that got no
+	// response after the request was sent, charged at their estimate.
+	Uncertain provider.Cost `json:"-"`
+	// TokensIn and TokensOut are the llm tokens of the calls made (ai columns).
+	TokensIn  int64 `json:"tokens_in"`
+	TokensOut int64 `json:"tokens_out"`
 }
 
 // Store persists runs and run items.
@@ -174,16 +186,17 @@ func (s *Store) List(ctx context.Context) ([]*Run, error) {
 
 // Items returns the items of a run ordered by row position, then column
 // order. With openOnly, only items that still need work (pending, failed,
-// skipped) are returned.
+// skipped) of columns that still exist are returned; RemovedColumns lists
+// the columns whose open items were left behind.
 func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item, error) {
 	q := `SELECT i.id, i.run_id, i.row_id, wr.position, i.column_id, c.name, i.status, i.attempts, i.calls,
-		i.value, i.provider, i.cache_hit, i.error, i.ms, i.cost_micros
+		i.value, i.provider, i.cache_hit, i.error, i.ms, i.cost_micros, i.uncertain_micros, i.tokens_in, i.tokens_out
 		FROM run_items i
 		JOIN workspace_rows wr ON wr.id = i.row_id
 		JOIN workspace_columns c ON c.id = i.column_id
 		WHERE i.run_id = ?`
 	if openOnly {
-		q += " AND i.status NOT IN ('ok', 'empty')"
+		q += " AND i.status NOT IN ('ok', 'empty') AND c.archived = 0"
 	}
 	q += " ORDER BY wr.position, i.id"
 	rows, err := s.db.QueryContext(ctx, q, runID)
@@ -195,7 +208,8 @@ func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item,
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.RunID, &it.RowID, &it.RowPosition, &it.ColumnID, &it.Column, &it.Status,
-			&it.Attempts, &it.Calls, &it.Value, &it.Provider, &it.CacheHit, &it.Error, &it.MS, &it.Cost); err != nil {
+			&it.Attempts, &it.Calls, &it.Value, &it.Provider, &it.CacheHit, &it.Error, &it.MS, &it.Cost, &it.Uncertain,
+			&it.TokensIn, &it.TokensOut); err != nil {
 			return nil, fmt.Errorf("scan run item: %w", err)
 		}
 		out = append(out, &it)
@@ -206,14 +220,41 @@ func (s *Store) Items(ctx context.Context, runID int64, openOnly bool) ([]*Item,
 	return out, nil
 }
 
+// RemovedColumns returns the names of the columns of run runID that have
+// open items but were removed (crm column rm) since the run started, even
+// when a column with the same name was added again.
+func (s *Store) RemovedColumns(ctx context.Context, runID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT c.name FROM run_items i JOIN workspace_columns c ON c.id = i.column_id
+		 WHERE i.run_id = ? AND c.archived = 1 AND i.status NOT IN ('ok', 'empty') ORDER BY c.name`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("run %d removed columns: %w", runID, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan run column: %w", err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate run columns: %w", err)
+	}
+	return out, nil
+}
+
 // SaveItem checkpoints one item and adds its cost to the run's spent total.
 // Run it inside a transaction together with the row cell update.
 func (s *Store) SaveItem(ctx context.Context, it *Item) error {
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE run_items SET status = ?, attempts = attempts + ?, calls = calls + ?, value = ?, provider = ?,
-		   cache_hit = ?, error = ?, ms = ?, cost_micros = cost_micros + ?, updated_at = datetime('now')
+		   cache_hit = ?, error = ?, ms = ?, cost_micros = cost_micros + ?, uncertain_micros = uncertain_micros + ?,
+		   tokens_in = tokens_in + ?, tokens_out = tokens_out + ?, updated_at = datetime('now')
 		 WHERE id = ?`,
-		it.Status, it.Attempts, it.Calls, it.Value, it.Provider, it.CacheHit, it.Error, it.MS, it.Cost, it.ID); err != nil {
+		it.Status, it.Attempts, it.Calls, it.Value, it.Provider, it.CacheHit, it.Error, it.MS, it.Cost, it.Uncertain,
+		it.TokensIn, it.TokensOut, it.ID); err != nil {
 		return fmt.Errorf("save run item %d: %w", it.ID, err)
 	}
 	if it.Cost != 0 {
@@ -230,7 +271,7 @@ func (s *Store) SaveItem(ctx context.Context, it *Item) error {
 func (s *Store) Stats(ctx context.Context, runID int64) (Stats, error) {
 	st := Stats{Providers: map[string]int{}}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT status, COALESCE(provider, ''), COUNT(*), SUM(cache_hit), SUM(calls)
+		`SELECT status, COALESCE(provider, ''), COUNT(*), SUM(cache_hit), SUM(calls), SUM(tokens_in), SUM(tokens_out)
 		 FROM run_items WHERE run_id = ? GROUP BY status, provider`, runID)
 	if err != nil {
 		return st, fmt.Errorf("run %d stats: %w", runID, err)
@@ -239,12 +280,15 @@ func (s *Store) Stats(ctx context.Context, runID int64) (Stats, error) {
 	for rows.Next() {
 		var status, prov string
 		var n, hits, calls int
-		if err := rows.Scan(&status, &prov, &n, &hits, &calls); err != nil {
+		var tokIn, tokOut int64
+		if err := rows.Scan(&status, &prov, &n, &hits, &calls, &tokIn, &tokOut); err != nil {
 			return st, fmt.Errorf("scan run stats: %w", err)
 		}
 		st.Items += n
 		st.CacheHits += hits
 		st.Calls += calls
+		st.TokensIn += tokIn
+		st.TokensOut += tokOut
 		switch status {
 		case ItemOK:
 			st.OK += n
@@ -264,28 +308,93 @@ func (s *Store) Stats(ctx context.Context, runID int64) (Stats, error) {
 	if err := rows.Err(); err != nil {
 		return st, fmt.Errorf("iterate run stats: %w", err)
 	}
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*), COALESCE(SUM(uncertain_micros), 0) FROM run_items WHERE run_id = ? AND uncertain_micros > 0",
+		runID).Scan(&st.Uncertain, &st.UncertainMicros); err != nil {
+		return st, fmt.Errorf("run %d uncertain cost: %w", runID, err)
+	}
 	return st, nil
 }
 
-// SetBudget changes the budget of a run (resume with a larger budget).
-func (s *Store) SetBudget(ctx context.Context, runID int64, budget provider.Cost) error {
-	if _, err := s.db.ExecContext(ctx,
-		"UPDATE runs SET budget_micros = ?, status = ?, finished_at = NULL WHERE id = ?", budget, StatusRunning, runID); err != nil {
-		return fmt.Errorf("update run %d budget: %w", runID, err)
-	}
-	return nil
-}
-
-// Finish records the final status and stats of a run invocation.
-func (s *Store) Finish(ctx context.Context, runID int64, status Status, st Stats) error {
+// Finish records the final status and stats of a run invocation and
+// releases owner's lease. It fails with ErrLeaseLost when owner no longer
+// holds the run (another executor took it over).
+func (s *Store) Finish(ctx context.Context, runID int64, owner string, status Status, st Stats) error {
 	enc, err := json.Marshal(st)
 	if err != nil {
 		return fmt.Errorf("encode run stats: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx,
-		"UPDATE runs SET status = ?, stats = ?, finished_at = datetime('now') WHERE id = ?",
-		status, string(enc), runID); err != nil {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE runs SET status = ?, stats = ?, finished_at = datetime('now'), owner = NULL, heartbeat_at = NULL
+		 WHERE id = ? AND owner = ?`,
+		status, string(enc), runID, owner)
+	if err != nil {
 		return fmt.Errorf("finish run %d: %w", runID, err)
 	}
-	return nil
+	return oneRow(res, runID)
+}
+
+// Latest returns the newest run of workspace workspaceID (nil when it has
+// none).
+func (s *Store) Latest(ctx context.Context, workspaceID int64) (*Run, error) {
+	return s.newest(ctx, "r.workspace_id = ?", workspaceID)
+}
+
+// newest returns the newest run matching where (nil when none does).
+func (s *Store) newest(ctx context.Context, where string, args ...any) (*Run, error) {
+	r, err := scanRun(s.db.QueryRowContext(ctx,
+		"SELECT "+runColumns+" FROM runs r JOIN workspaces w ON w.id = r.workspace_id WHERE "+where+
+			" ORDER BY r.id DESC LIMIT 1", args...).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("newest run: %w", err)
+	}
+	return r, nil
+}
+
+// CellState is the newest run item of one row × column of a workspace.
+type CellState struct {
+	RowID    int64
+	Column   string
+	RunID    int64
+	Status   string
+	Error    *string
+	Provider *string
+	CacheHit bool
+	Cost     provider.Cost
+	// Uncertain is the part of Cost not confirmed by a response.
+	Uncertain provider.Cost
+}
+
+// CellStates returns, for every row × active column of workspace
+// workspaceID that some run covered, the item of the newest such run. A run
+// item's row belongs to its run's workspace, so the rows select the items
+// (idx_run_items_cell) instead of every item of every run.
+func (s *Store) CellStates(ctx context.Context, workspaceID int64) ([]*CellState, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT i.row_id, c.name, i.run_id, i.status, i.error, i.provider, i.cache_hit, i.cost_micros, i.uncertain_micros
+		 FROM run_items i JOIN workspace_columns c ON c.id = i.column_id
+		 WHERE c.archived = 0 AND i.id IN (
+		   SELECT MAX(i2.id) FROM run_items i2
+		   WHERE i2.row_id IN (SELECT id FROM workspace_rows WHERE workspace_id = ?)
+		   GROUP BY i2.row_id, i2.column_id)`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("cell states: %w", err)
+	}
+	defer rows.Close()
+	var out []*CellState
+	for rows.Next() {
+		var c CellState
+		if err := rows.Scan(&c.RowID, &c.Column, &c.RunID, &c.Status, &c.Error, &c.Provider, &c.CacheHit,
+			&c.Cost, &c.Uncertain); err != nil {
+			return nil, fmt.Errorf("scan cell state: %w", err)
+		}
+		out = append(out, &c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate cell states: %w", err)
+	}
+	return out, nil
 }

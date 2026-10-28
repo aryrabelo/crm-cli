@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jdanielnd/crm-cli/internal/column"
@@ -170,6 +171,9 @@ func (s *Store) AddColumn(ctx context.Context, c *column.Column) error {
 	if err := c.Validate(existing); err != nil {
 		return err
 	}
+	if err := s.purgeArchived(ctx, c.WorkspaceID, c.Name); err != nil {
+		return err
+	}
 	cfg, err := json.Marshal(c.Config)
 	if err != nil {
 		return fmt.Errorf("encode column config: %w", err)
@@ -192,8 +196,42 @@ func (s *Store) AddColumn(ctx context.Context, c *column.Column) error {
 	return nil
 }
 
+// UpdateColumn replaces the definition (config and cost estimate) of an
+// existing column, validated against the other columns. Its type is fixed.
+func (s *Store) UpdateColumn(ctx context.Context, c *column.Column) error {
+	existing, err := s.Columns(ctx, c.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if err := c.Validate(withoutColumn(existing, c.Name)); err != nil {
+		return err
+	}
+	cfg, err := json.Marshal(c.Config)
+	if err != nil {
+		return fmt.Errorf("encode column config: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE workspace_columns SET config = ?, cost_est_micros = ? WHERE id = ? AND type = ?",
+		string(cfg), c.CostEst, c.ID, c.Type); err != nil {
+		return fmt.Errorf("update column %s: %w", c.Name, err)
+	}
+	return nil
+}
+
+// SwapPositions exchanges the display order of two columns of a workspace.
+func (s *Store) SwapPositions(ctx context.Context, a, b *column.Column) error {
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE workspace_columns SET position = CASE id WHEN ? THEN ? ELSE ? END WHERE id IN (?, ?)",
+		a.ID, b.Position, a.Position, a.ID, b.ID); err != nil {
+		return fmt.Errorf("reorder columns %s, %s: %w", a.Name, b.Name, err)
+	}
+	a.Position, b.Position = b.Position, a.Position
+	return nil
+}
+
 // RemoveColumn archives a column. Cell values stay in the rows. A column
-// that another column reads (enrich --from, formula {{ref}}) cannot be removed.
+// that another column reads (enrich --from, formula or ai prompt {{ref}}, ai
+// reason column) cannot be removed.
 func (s *Store) RemoveColumn(ctx context.Context, w *Workspace, name string) error {
 	cols, err := s.Columns(ctx, w.ID)
 	if err != nil {
@@ -218,15 +256,81 @@ func (s *Store) RemoveColumn(ctx context.Context, w *Workspace, name string) err
 		if c.Type == column.Enrich && c.Config.From == name {
 			return model.NewExitError(model.ErrConflict, "column %q is the --from of column %q", name, c.Name)
 		}
-		if c.Type == column.Formula {
-			probe := column.Column{Name: c.Name, Type: column.Formula, Config: c.Config}
-			if probe.Validate(withoutColumn(others, c.Name)) != nil {
-				return model.NewExitError(model.ErrConflict, "column %q is used by formula %q", name, c.Name)
-			}
+		if c.Type == column.AI && c.Config.Reason == name {
+			return model.NewExitError(model.ErrConflict, "column %q is the reason column of ai column %q", name, c.Name)
+		}
+		// Resolve against the full column set: "{{company.domain}}" falls
+		// back to the column "company" once "company.domain" is gone, which
+		// would silently change the formula's value instead of failing.
+		if slices.Contains(c.References(cols), name) {
+			return model.NewExitError(model.ErrConflict, "column %q is used by %s column %q", name, c.Type, c.Name)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, "UPDATE workspace_columns SET archived = 1 WHERE id = ?", target.ID); err != nil {
 		return fmt.Errorf("remove column %s: %w", name, err)
+	}
+	return nil
+}
+
+// purgeArchived drops the cell values left in the rows by an archived column
+// of the same name, so a re-added column does not show stale values.
+func (s *Store) purgeArchived(ctx context.Context, workspaceID int64, name string) error {
+	var archived int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM workspace_columns WHERE workspace_id = ? AND name = ? AND archived = 1",
+		workspaceID, name).Scan(&archived); err != nil {
+		return fmt.Errorf("check archived column %s: %w", name, err)
+	}
+	if archived == 0 {
+		return nil
+	}
+	needle, err := json.Marshal(name)
+	if err != nil {
+		return fmt.Errorf("encode column name: %w", err)
+	}
+	// Row data is written with json.Marshal, so the key appears as "name":.
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, data FROM workspace_rows WHERE workspace_id = ? AND instr(data, ?) > 0",
+		workspaceID, string(needle)+":")
+	if err != nil {
+		return fmt.Errorf("find stale cells of %s: %w", name, err)
+	}
+	type stale struct {
+		id   int64
+		data []byte
+	}
+	var todo []stale
+	for rows.Next() {
+		var st stale
+		var data string
+		if err := rows.Scan(&st.id, &data); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan row: %w", err)
+		}
+		cells := map[string]any{}
+		if err := json.Unmarshal([]byte(data), &cells); err != nil {
+			rows.Close()
+			return fmt.Errorf("row %d: decode data: %w", st.id, err)
+		}
+		if _, ok := cells[name]; !ok {
+			continue
+		}
+		delete(cells, name)
+		if st.data, err = json.Marshal(cells); err != nil {
+			rows.Close()
+			return fmt.Errorf("row %d: encode data: %w", st.id, err)
+		}
+		todo = append(todo, st)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate rows: %w", err)
+	}
+	rows.Close()
+	for _, st := range todo {
+		if _, err := s.db.ExecContext(ctx, "UPDATE workspace_rows SET data = ? WHERE id = ?", string(st.data), st.id); err != nil {
+			return fmt.Errorf("purge row %d: %w", st.id, err)
+		}
 	}
 	return nil
 }
@@ -276,8 +380,8 @@ func (s *Store) Rows(ctx context.Context, workspaceID int64) ([]*Row, error) {
 	return out, nil
 }
 
-// SetCell writes one cell of a row (read-modify-write of the data object).
-func (s *Store) SetCell(ctx context.Context, rowID int64, name string, v any) error {
+// SetCells writes cells of a row (read-modify-write of the data object).
+func (s *Store) SetCells(ctx context.Context, rowID int64, values map[string]any) error {
 	var data string
 	if err := s.db.QueryRowContext(ctx, "SELECT data FROM workspace_rows WHERE id = ?", rowID).Scan(&data); err != nil {
 		return fmt.Errorf("read row %d: %w", rowID, err)
@@ -286,7 +390,9 @@ func (s *Store) SetCell(ctx context.Context, rowID int64, name string, v any) er
 	if err := json.Unmarshal([]byte(data), &cells); err != nil {
 		return fmt.Errorf("row %d: decode data: %w", rowID, err)
 	}
-	cells[name] = v
+	for name, v := range values {
+		cells[name] = v
+	}
 	enc, err := json.Marshal(cells)
 	if err != nil {
 		return fmt.Errorf("row %d: encode data: %w", rowID, err)

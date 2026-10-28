@@ -6,19 +6,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"regexp"
 	"slices"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/model"
 )
 
-// Kinds lists the adapter implementations a provider row can use.
-func Kinds() []string { return []string{"exa", "jina", "github", "http"} }
+// Kinds lists the adapter implementations a provider row can use. llm
+// providers serve ai columns (see Registry.OpenLLM); the others serve enrich
+// waterfalls (Registry.Open).
+func Kinds() []string { return []string{"exa", "jina", "github", "http", "llm"} }
 
 // Settings is the kind-specific part of a provider's configuration.
 type Settings struct {
-	// BaseURL overrides the API root (exa, jina, github). For every kind the
-	// environment variable CRM_PROVIDER_<NAME>_URL takes precedence.
+	// BaseURL overrides the API root (exa, jina, github, llm). For every kind
+	// the environment variable CRM_PROVIDER_<NAME>_URL takes precedence.
 	BaseURL string `json:"base_url,omitempty"`
 	// Endpoint selects the exa API: "search" (default) or "contents".
 	Endpoint string `json:"endpoint,omitempty"`
@@ -39,7 +46,74 @@ type Settings struct {
 	// AuthHeader is the http header carrying the credential named by
 	// auth_ref. Empty means "Authorization: Bearer <token>".
 	AuthHeader string `json:"auth_header,omitempty"`
+	// ErrorPath (http) marks a 2xx response as an error when this dotted
+	// path holds a value that is not empty, false or 0 ("error",
+	// "errors.0.message"): the answer is not cached and the item fails.
+	ErrorPath string `json:"error_path,omitempty"`
+	// OKPath (http) marks a 2xx response as an error unless this dotted path
+	// holds a value that is not empty, false or 0 ("success", "status").
+	OKPath string `json:"ok_path,omitempty"`
+	// Model is the llm model (default: $CRM_LLM_MODEL).
+	Model string `json:"model,omitempty"`
+	// PriceInPerMTok and PriceOutPerMTok are the llm prices in USD per 1M
+	// prompt / completion tokens (default: $CRM_LLM_PRICE_IN / _OUT). nil is
+	// unset; 0 is free (local model, subscription gateway).
+	PriceInPerMTok  *float64 `json:"price_in_per_mtok,omitempty"`
+	PriceOutPerMTok *float64 `json:"price_out_per_mtok,omitempty"`
+	// MaxTokens caps the completion tokens of one llm call (default 512).
+	MaxTokens int `json:"max_tokens,omitempty"`
+	// CacheTTL is how long a cached answer of this provider is reused: a
+	// duration ("720h", "30d"); "0" never expires; empty is DefaultCacheTTL.
+	CacheTTL string `json:"cache_ttl,omitempty"`
 }
+
+// DefaultCacheTTL is how long cached answers are reused when a provider sets
+// no cache_ttl. Older entries are treated as missing, so the provider is
+// called (and paid) again and the entry refreshed.
+const DefaultCacheTTL = 30 * 24 * time.Hour
+
+// TTL returns the cache lifetime of the provider's answers; 0 means they
+// never expire.
+func (s Settings) TTL() (time.Duration, error) {
+	if s.CacheTTL == "" {
+		return DefaultCacheTTL, nil
+	}
+	return ParseAge(s.CacheTTL)
+}
+
+// ParseAge parses a non-negative duration: Go syntax ("36h", "90m") or whole
+// days ("30d").
+func ParseAge(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("invalid duration %q (use e.g. 30d, 12h or 0)", s)
+		}
+		if int64(n) > math.MaxInt64/int64(24*time.Hour) {
+			return 0, fmt.Errorf("invalid duration %q: too large", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid duration %q (use e.g. 30d, 12h or 0)", s)
+	}
+	return d, nil
+}
+
+// Accepted per-provider rate limits, in calls per second (0 is unlimited).
+const (
+	MinRate = 1e-6
+	MaxRate = 1e6
+)
+
+// MaxLLMTokens caps an llm provider's max_tokens.
+const MaxLLMTokens = 1 << 20
+
+// validName keeps URLOverrideEnv collision-free: '-' is the only character
+// it rewrites, so names that differ never share an environment variable.
+var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // Config is one row of the providers table.
 type Config struct {
@@ -118,14 +192,26 @@ func (c *Config) Validate() error {
 	if !slices.Contains(Kinds(), c.Kind) {
 		return model.NewExitError(model.ErrValidation, "provider %s: unknown kind %q (use one of %v)", c.Name, c.Kind, Kinds())
 	}
-	if c.Rate < 0 {
-		return model.NewExitError(model.ErrValidation, "provider %s: rate must be >= 0", c.Name)
+	if !validName.MatchString(c.Name) {
+		return model.NewExitError(model.ErrValidation, "provider name %q: use lowercase letters, digits and '-' (it names the %s_... environment variable)", c.Name, "CRM_PROVIDER")
+	}
+	if math.IsNaN(c.Rate) || math.IsInf(c.Rate, 0) || c.Rate < 0 || c.Rate > MaxRate || (c.Rate > 0 && c.Rate < MinRate) {
+		return model.NewExitError(model.ErrValidation, "provider %s: rate must be 0 (unlimited) or between %g and %g calls per second", c.Name, MinRate, MaxRate)
 	}
 	if c.Price < 0 {
 		return model.NewExitError(model.ErrValidation, "provider %s: price must be >= 0", c.Name)
 	}
+	if _, err := c.Settings.TTL(); err != nil {
+		return model.NewExitError(model.ErrValidation, "provider %s: cache ttl: %s", c.Name, err)
+	}
+	if c.Kind != "http" && (c.Settings.ErrorPath != "" || c.Settings.OKPath != "") {
+		return model.NewExitError(model.ErrValidation, "provider %s: error_path and ok_path apply to http providers only", c.Name)
+	}
 	switch c.Kind {
 	case "exa":
+		if c.AuthRef == "" {
+			return model.NewExitError(model.ErrValidation, "provider %s: exa providers need an API key (--auth-env NAME)", c.Name)
+		}
 		if e := c.Settings.Endpoint; e != "" && e != "search" && e != "contents" {
 			return model.NewExitError(model.ErrValidation, "provider %s: exa endpoint must be search or contents", c.Name)
 		}
@@ -136,6 +222,21 @@ func (c *Config) Validate() error {
 	case "http":
 		if c.Settings.URL == "" {
 			return model.NewExitError(model.ErrValidation, "provider %s: http providers need a url template", c.Name)
+		}
+	case "llm":
+		if c.Price != 0 {
+			return model.NewExitError(model.ErrValidation, "provider %s: llm providers are priced per token (--price-in, --price-out), not per call", c.Name)
+		}
+		for _, p := range []*float64{c.Settings.PriceInPerMTok, c.Settings.PriceOutPerMTok} {
+			if p == nil {
+				continue
+			}
+			if _, ok := usdPerMTok(*p); !ok {
+				return model.NewExitError(model.ErrValidation, "provider %s: token prices must be between 0 and %g USD per 1M tokens", c.Name, MaxPricePerMTok)
+			}
+		}
+		if c.Settings.MaxTokens < 0 || c.Settings.MaxTokens > MaxLLMTokens {
+			return model.NewExitError(model.ErrValidation, "provider %s: max tokens must be between 0 and %d", c.Name, MaxLLMTokens)
 		}
 	}
 	return nil

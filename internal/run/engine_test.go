@@ -231,10 +231,12 @@ func TestDryRun_EstimatesAndWritesNothing(t *testing.T) {
 func TestRetry_BacksOffOn429(t *testing.T) {
 	var mu sync.Mutex
 	seen := map[string]int{}
+	times := map[string][]time.Time{}
 	api := newAPI(t, func(w http.ResponseWriter, q string) {
 		mu.Lock()
 		seen[q]++
 		n := seen[q]
+		times[q] = append(times[q], time.Now())
 		mu.Unlock()
 		if n <= 2 {
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -256,11 +258,20 @@ func TestRetry_BacksOffOn429(t *testing.T) {
 	for _, it := range items {
 		assert.Equal(t, 3, it.Attempts)
 	}
+	// Retries wait: base 5ms doubling, minus at most 20% jitter (tolerant bounds).
+	mu.Lock()
+	for q, ts := range times {
+		require.Len(t, ts, 3, q)
+		assert.GreaterOrEqual(t, ts[1].Sub(ts[0]), 3*time.Millisecond, q)
+		assert.GreaterOrEqual(t, ts[2].Sub(ts[1]), 6*time.Millisecond, q)
+	}
+	mu.Unlock()
 
 	// With fewer retries than the provider needs, items fail and stay resumable.
 	e2 := setup(t, 2)
 	mu.Lock()
 	clear(seen)
+	clear(times)
 	mu.Unlock()
 	e2.provider(t, "limited", api, "v", 1000)
 	e2.enrich(t, "v", "limited")

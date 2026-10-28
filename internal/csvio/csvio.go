@@ -61,11 +61,19 @@ func Parse(data []byte) (*Table, error) {
 
 	p := parser{data: data, line: 1}
 	first := true
+	seenTerm := ""
 	for !p.eof() {
 		startLine := p.line
 		rec, term, blank, err := p.record()
 		if err != nil {
 			return nil, err
+		}
+		if term != "" {
+			if seenTerm == "" {
+				seenTerm = term
+			} else if term != seenTerm {
+				return nil, &ParseError{Line: startLine, Msg: "mixed line endings (LF and CRLF): normalize the file first"}
+			}
 		}
 		if first {
 			t.Dialect.CRLF = term == "\r\n"
@@ -136,6 +144,12 @@ func (p *parser) field() (string, bool, error) {
 		c := p.data[p.pos]
 		if c == ',' || c == '\n' || (c == '\r' && p.pos+1 < len(p.data) && p.data[p.pos+1] == '\n') {
 			break
+		}
+		if c == '"' {
+			return "", false, &ParseError{Line: p.line, Msg: "bare quote in unquoted field (quote the whole field and double inner quotes)"}
+		}
+		if c == '\r' {
+			return "", false, &ParseError{Line: p.line, Msg: "bare carriage return in unquoted field"}
 		}
 		p.pos++
 	}

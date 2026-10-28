@@ -1,6 +1,7 @@
 package table
 
 import (
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -26,26 +27,40 @@ var filterOps = []string{"!=", ">=", "<=", "!~", "=", ">", "<", "~"}
 
 // ParseFilter parses expr against the given column names.
 func ParseFilter(expr string, columns []string) (*Filter, error) {
+	// A column name may itself contain operator characters ("x=y",
+	// "Score>=70"): try every split point and keep the longest known column.
+	var best *Filter
+	var firstUnknown string
 	for i := 1; i < len(expr); i++ {
 		for _, op := range filterOps {
 			if len(expr)-i < len(op) || expr[i:i+len(op)] != op {
 				continue
 			}
-			f := &Filter{Column: expr[:i], Op: op, Value: expr[i+len(op):]}
-			if !slices.Contains(columns, f.Column) {
-				return nil, model.NewExitError(model.ErrValidation, "--only %q: no column named %q", expr, f.Column)
-			}
-			if op == "~" || op == "!~" {
-				re, err := regexp.Compile(f.Value)
-				if err != nil {
-					return nil, model.NewExitError(model.ErrValidation, "--only %q: invalid regex: %s", expr, err)
+			name := expr[:i]
+			if !slices.Contains(columns, name) {
+				if firstUnknown == "" {
+					firstUnknown = name
 				}
-				f.re = re
+				continue
 			}
-			return f, nil
+			best = &Filter{Column: name, Op: op, Value: expr[i+len(op):]}
+			break // filterOps lists longer operators first
 		}
 	}
-	return nil, model.NewExitError(model.ErrValidation, "invalid --only %q: expected <column><op><value> with op one of = != > >= < <= ~ !~", expr)
+	if best == nil {
+		if firstUnknown != "" {
+			return nil, model.NewExitError(model.ErrValidation, "--only %q: no column named %q", expr, firstUnknown)
+		}
+		return nil, model.NewExitError(model.ErrValidation, "invalid --only %q: expected <column><op><value> with op one of = != > >= < <= ~ !~", expr)
+	}
+	if best.Op == "~" || best.Op == "!~" {
+		re, err := regexp.Compile(best.Value)
+		if err != nil {
+			return nil, model.NewExitError(model.ErrValidation, "--only %q: invalid regex: %s", expr, err)
+		}
+		best.re = re
+	}
+	return best, nil
 }
 
 // Match reports whether the row cells satisfy the filter.
@@ -81,15 +96,26 @@ func equal(a, b string) bool {
 	if a == b {
 		return true
 	}
-	x, errA := strconv.ParseFloat(a, 64)
-	y, errB := strconv.ParseFloat(b, 64)
-	return errA == nil && errB == nil && x == y
+	x, okA := parseNumber(a)
+	y, okB := parseNumber(b)
+	return okA && okB && x == y
+}
+
+// parseNumber parses a finite number: ParseFloat also accepts "NaN" and
+// "Inf", which would make text cells compare as numbers (NaN is neither
+// below nor above anything, so it would satisfy both >= and <=).
+func parseNumber(s string) (float64, bool) {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
 }
 
 func compare(a, b string) int {
-	x, errA := strconv.ParseFloat(a, 64)
-	y, errB := strconv.ParseFloat(b, 64)
-	if errA == nil && errB == nil {
+	x, okA := parseNumber(a)
+	y, okB := parseNumber(b)
+	if okA && okB {
 		switch {
 		case x < y:
 			return -1
@@ -156,6 +182,26 @@ func (v *View) Header() []string {
 		h[i] = c.Name
 	}
 	return h
+}
+
+// Project returns the view restricted to the named columns, in that order.
+// No names keeps every column.
+func (v *View) Project(names []string) (*View, error) {
+	if len(names) == 0 {
+		return v, nil
+	}
+	cols := make([]*column.Column, len(names))
+	for i, n := range names {
+		j := slices.IndexFunc(v.Columns, func(c *column.Column) bool { return c.Name == n })
+		if j < 0 {
+			return nil, model.NewExitError(model.ErrValidation, "no column named %q", n)
+		}
+		if slices.Contains(names[:i], n) {
+			return nil, model.NewExitError(model.ErrValidation, "column %q is listed twice", n)
+		}
+		cols[i] = v.Columns[j]
+	}
+	return &View{Columns: cols, Rows: v.Rows, Cells: v.Cells}, nil
 }
 
 // Records renders every kept row as text cells (CSV/TSV/table output).
