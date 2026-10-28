@@ -33,7 +33,8 @@ func mcpServeCmd() *cobra.Command {
 
 Without --http it speaks JSON-RPC on stdin/stdout (what desktop clients
 spawn). With --http ADDR it serves the streamable HTTP transport at
-http://ADDR` + crmmcp.HTTPPath + `, and every request needs
+http(s)://ADDR` + crmmcp.HTTPPath + ` (https when --tls-cert and
+--tls-key are given), and every request needs
 "Authorization: Bearer <token>":
 
   - --token (or ` + mcpTokenEnv + `) sets the token. Without one, a loopback
@@ -49,8 +50,9 @@ http://ADDR` + crmmcp.HTTPPath + `, and every request needs
     --behind-tls-proxy says a TLS reverse proxy in front terminates HTTPS.`,
 		Example: `  crm mcp serve
   crm mcp serve --http 127.0.0.1:8765          # prints a generated token on stderr
-  CRM_MCP_TOKEN=$(openssl rand -hex 32) crm mcp serve --http :8765 --tls-cert crm.pem --tls-key crm.key
   CRM_MCP_TOKEN=s3cret crm mcp serve --http 127.0.0.1:8765
+  export CRM_MCP_TOKEN=$(openssl rand -hex 32)   # exported, so the client can send it too
+  crm mcp serve --http :8765 --tls-cert crm.pem --tls-key crm.key
   curl -H "Authorization: Bearer s3cret" -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' http://127.0.0.1:8765/mcp \
     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'`,

@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `crm rows --import <id>` is an immutable export: it returns the cells recorded when the batch was imported, so a later keyed import, edit or archive no longer changes it (batches imported by an older build have no recorded cells and still read the current records, archived ones omitted)
+- `crm rows <person|org> --import <id>` is an immutable export: it returns the cells recorded when the batch was imported, so a later keyed import, edit or archive no longer changes it (batches imported by an older build have no recorded cells and still read the current records, archived ones omitted)
 - `crm column list` and the UI column menu recompute the per-row cost estimate (`Est. Cost/Row`) from the current provider prices, so `crm provider set --price` shows up without re-adding the column
 - A fatal error that stops a persisted run now names it: `run N interrupted; continue with: crm run --resume N`
 - `crm push --threshold 0` (and MCP `threshold: 0`) is honoured instead of falling back to `0.88`
@@ -146,10 +146,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GoReleaser for cross-platform builds
 - Homebrew tap
 
+[Unreleased]: https://github.com/aryrabelo/crm-cli/compare/v0.1.6...HEAD
 [0.1.6]: https://github.com/jdanielnd/crm-cli/releases/tag/v0.1.6
 [0.1.5]: https://github.com/jdanielnd/crm-cli/releases/tag/v0.1.5
 [0.1.4]: https://github.com/jdanielnd/crm-cli/releases/tag/v0.1.4
 [0.1.3]: https://github.com/jdanielnd/crm-cli/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jdanielnd/crm-cli/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jdanielnd/crm-cli/releases/tag/v0.1.1
-[Unreleased]: https://github.com/jdanielnd/crm-cli/compare/v0.1.6...HEAD

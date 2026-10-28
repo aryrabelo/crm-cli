@@ -59,7 +59,7 @@ internal/
     qualify.go                 # crm qualify: yes/no/maybe ai column (+ reason) run through crm run (fork: data plane)
     push.go                    # crm push: table rows → people/orgs with dedupe (fork: data plane)
     bench.go                   # crm bench run [--baseline per-entity] (fork: data plane)
-    ui.go                      # crm ui [--addr] [--token] [--tls-cert --tls-key] [--open]: spreadsheet page server, prints the #token= URL (fork: data plane)
+    ui.go                      # crm ui [--addr] [--token] [--tls-cert --tls-key | --behind-tls-proxy] [--open]: spreadsheet page server, prints the #token= URL (fork: data plane)
     custom_fields.go           # Custom field output for show commands
   db/
     db.go                      # Connection, pragmas, migration runner (version = file-name prefix, tracked in schema_migrations)
