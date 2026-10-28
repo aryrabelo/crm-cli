@@ -107,7 +107,20 @@ func (s *Service) buildColumn(ctx context.Context, tableName string, spec Column
 			c.Config.Reason = ReasonColumn(c.Name)
 		}
 	}
+	if err := checkReasonNotKey(ws, c); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// checkReasonNotKey refuses a reason column that is the table key: filling it
+// would overwrite the imported key values.
+func checkReasonNotKey(ws *table.Workspace, c *column.Column) error {
+	if r := c.Config.Reason; r != "" && ws.KeyColumn != nil && r == *ws.KeyColumn {
+		return model.NewExitError(model.ErrValidation,
+			"reason column %q is the key column of table %s: pick another column name", r, ws.Name)
+	}
+	return nil
 }
 
 // saveColumn adds c (or, with update, redefines the existing column of the

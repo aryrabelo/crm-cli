@@ -53,8 +53,12 @@ fields. Rows without a name or dedupe key are reported and skipped.
 				return err
 			}
 			defer db.Close()
+			var thresholdOpt *float64
+			if cmd.Flags().Changed("threshold") {
+				thresholdOpt = &threshold
+			}
 			res, err := newService(db).Push(cmd.Context(), service.PushOptions{Table: args[0], To: to, Dedupe: dedupe,
-				Only: only, Maps: maps, Threshold: threshold, DryRun: dryRun})
+				Only: only, Maps: maps, Threshold: thresholdOpt, DryRun: dryRun})
 			if err != nil {
 				return err
 			}

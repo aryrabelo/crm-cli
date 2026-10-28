@@ -58,6 +58,21 @@ func TestPush_DedupeByEmailAndFuzzyOrgs(t *testing.T) {
 	assert.Contains(t, stderr, "pushed 3 rows of orgs to org (dedupe fuzz): 1 created, 0 updated, 2 merged, 0 failed")
 }
 
+// Cubic #4381117094: an explicit --threshold 0 is honoured, not replaced by the default.
+func TestPush_ThresholdZeroIsNotTheDefault(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	orgs := writeFile(t, dir, "orgs.csv", "company\nAcme Analytics\nGlobex\n")
+	_, stderr, code := crm(t, dbPath, "table", "import", orgs, "--as", "orgs")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crm(t, dbPath, "push", "orgs", "--to", "org", "--dedupe", "fuzz", "--dry-run")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stderr, "2 created, 0 updated, 0 merged")
+	_, stderr, code = crm(t, dbPath, "push", "orgs", "--to", "org", "--dedupe", "fuzz", "--threshold", "0", "--dry-run")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stderr, "1 created, 0 updated, 1 merged")
+}
+
 func TestPush_UsageErrors(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "crm.db")

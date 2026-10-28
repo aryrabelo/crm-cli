@@ -86,15 +86,23 @@ func qualifyFields(cols []*column.Column, name string, explain bool, explicit []
 			reasons[o.Config.Reason] = true
 		}
 	}
-	var fields []string
+	var fields, braced []string
 	for _, o := range cols {
-		if o.Name == name || reasons[o.Name] || strings.Contains(o.Name, "{{") || strings.Contains(o.Name, "}}") {
+		if o.Name == name || reasons[o.Name] {
 			continue
 		}
-		switch {
-		case o.Type == column.Input, o.Type == column.Formula, o.Type == column.Enrich && o.Config.Field != "":
-			fields = append(fields, o.Name)
+		if o.Type != column.Input && o.Type != column.Formula && (o.Type != column.Enrich || o.Config.Field == "") {
+			continue
 		}
+		if strings.Contains(o.Name, "{{") || strings.Contains(o.Name, "}}") {
+			braced = append(braced, o.Name)
+			continue
+		}
+		fields = append(fields, o.Name)
+	}
+	if len(braced) > 0 {
+		return nil, model.NewExitError(model.ErrValidation,
+			"column(s) %s contain {{ or }} and cannot be prompt placeholders; pick the others with --fields a,b", strings.Join(braced, ", "))
 	}
 	if len(fields) == 0 {
 		return nil, model.NewExitError(model.ErrValidation,
@@ -196,6 +204,9 @@ func (s *Service) Qualify(ctx context.Context, opts QualifyOptions) (*QualifyRes
 		c.ID = o.ID
 	}
 	if res.Fields, err = qualifyFields(cols, name, opts.Explain, opts.Fields); err != nil {
+		return nil, err
+	}
+	if err := checkReasonNotKey(ws, c); err != nil {
 		return nil, err
 	}
 	c.Config.Prompt = qualifyPrompt(opts.Criteria, res.Fields, opts.FieldLimit)

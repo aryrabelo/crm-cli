@@ -478,7 +478,7 @@ type pushArgs struct {
 	Dedupe    string   `json:"dedupe,omitempty" jsonschema:"enum=email,enum=domain,enum=fuzz" jsonschema_description:"email (people, default), domain (orgs, default) or fuzz (similar names)"`
 	Filters   []string `json:"filters,omitempty" jsonschema_description:"Only push rows matching every filter expression"`
 	Map       []string `json:"map,omitempty" jsonschema_description:"column=field overrides, as crm import --map"`
-	Threshold float64  `json:"threshold,omitempty" jsonschema_description:"Fuzz name similarity cut-off 0-1 (default 0.88)"`
+	Threshold *float64 `json:"threshold,omitempty" jsonschema_description:"Fuzz name similarity cut-off 0-1 (default 0.88)"`
 	DryRun    bool     `json:"dry_run,omitempty" jsonschema_description:"Report creates/updates/merges; write nothing"`
 }
 
