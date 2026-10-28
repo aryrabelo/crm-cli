@@ -18,7 +18,9 @@ func setupTestServer(t *testing.T) *server.MCPServer {
 	d, err := db.Open(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { d.Close() })
-	return crmmcp.NewServer(d, "test")
+	s := crmmcp.New(d, "test")
+	t.Cleanup(s.Close)
+	return s.MCP()
 }
 
 func callTool(t *testing.T, s *server.MCPServer, name string, args map[string]any) gomcp.JSONRPCMessage {

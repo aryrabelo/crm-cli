@@ -2,13 +2,18 @@
 
 ![crm banner](.github/banner-crm-cli.png)
 
-[![CI](https://github.com/jdanielnd/crm-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jdanielnd/crm-cli/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/jdanielnd/crm-cli)](https://goreportcard.com/report/github.com/jdanielnd/crm-cli)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/aryrabelo/crm-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/aryrabelo/crm-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](NOTICE)
 
 A local-first personal CRM that lives in your terminal. Manage contacts, organizations, interactions, deals, and tasks — all from the command line. Ships with a built-in [MCP server](https://modelcontextprotocol.io/) so AI agents like Claude can read and update your CRM directly.
 
 Single static binary. SQLite database. No cloud. No accounts. Your data stays on your machine.
+
+## About this fork
+
+This is **[aryrabelo/crm-cli](https://github.com/aryrabelo/crm-cli)**, a fork of [jdanielnd/crm-cli](https://github.com/jdanielnd/crm-cli) (MIT; terms in [`NOTICE`](NOTICE)). The person/org/deal/task CRM is upstream's; the fork adds the data plane: `crm table`, `crm column`, `crm run`, `crm provider`, `crm cache`, `crm qualify`, `crm push`, `crm bench`, and the batch MCP tools over stdio and HTTP.
+
+The upstream binaries (`brew install jdanielnd/tap/crm`, GitHub Releases of jdanielnd/crm-cli, `go install github.com/jdanielnd/crm-cli/cmd/crm@latest`) do **not** have these commands. The fork keeps upstream's Go module path (`github.com/jdanielnd/crm-cli`), so `go install github.com/aryrabelo/crm-cli/cmd/crm@<ref>` fails with `module declares its path as: github.com/jdanielnd/crm-cli but was required as: github.com/aryrabelo/crm-cli`. Build it from a checkout instead (see [Install](#install)).
 
 ## Features
 
@@ -21,21 +26,23 @@ Single static binary. SQLite database. No cloud. No accounts. Your data stays on
 - **Full-Text Search** — find anything across all entities instantly
 - **Context Briefing** — one command to get everything about a person before a meeting
 - **AI-Ready** — built-in MCP server for Claude and other AI agents
+- **Enrichment Pipeline** — CSV tables, computed columns and batch runs with provider waterfall, cache, budget and resume
+- **AI Columns & Qualify** — per-row LLM answers (typed: text, score, enum, bool) and `crm qualify --explain` decisions with reasons, through any OpenAI-compatible endpoint, with tokens and cost per run
 - **Multiple Output Formats** — table, JSON, CSV, TSV — pipe into anything
 - **Zero Dependencies** — single binary, pure-Go SQLite, runs anywhere
 
 ## Install
 
+The fork is built from source (Go 1.24+, no CGO):
+
 ```bash
-# Homebrew (macOS/Linux)
-brew install jdanielnd/tap/crm
-
-# Go
-go install github.com/jdanielnd/crm-cli/cmd/crm@latest
-
-# Or download a binary from GitHub Releases
-# https://github.com/jdanielnd/crm-cli/releases
+git clone https://github.com/aryrabelo/crm-cli.git
+cd crm-cli
+go build -o crm ./cmd/crm        # or: go install ./cmd/crm  (installs to $(go env GOPATH)/bin)
+./crm table --help               # present in the fork, absent from the upstream binary
 ```
+
+The upstream `crm` (Homebrew `jdanielnd/tap/crm`, jdanielnd/crm-cli releases) has the CRM commands only.
 
 ## Quick Start
 
@@ -166,11 +173,114 @@ crm import leads.csv --as person --key email          # upsert by email, no dupl
 crm import orgs.csv --as org --map "Razão Social=name,Site=domain" --dry-run
 cat leads.csv | crm import - --as person
 crm rows person -f csv                                 # id + core fields + every custom field
-crm rows person --import 1 -f csv > roundtrip.csv      # original header and row order of batch 1
+crm rows person --import 1 -f csv > roundtrip.csv      # batch 1 as imported: header, row order, cells
 crm rows org --only industry=SaaS -f json
 ```
 
-Headers like `name`, `email`, `phone`, `company`, `domain` map to core fields automatically (`--map csvcol=field` overrides; `--map csvcol=` keeps a column custom). Every other column becomes a custom field, shown by `person show` / `org show` (`custom_fields` in JSON). Each import is recorded as a batch, so `crm rows --import <id> -f csv` reproduces the file byte for byte — header text, row order, UTF-8 BOM, CRLF/LF and trailing newline included. Normalized on the way back: unnecessary quotes (only cells with a comma, quote or line break are quoted) and blank lines in multi-column files. Duplicate or empty headers, ragged rows and broken quoting fail with exit code `2`.
+Headers like `name`, `email`, `phone`, `company`, `domain` map to core fields automatically (`--map csvcol=field` overrides; `--map csvcol=` keeps a column custom). Every other column becomes a custom field, shown by `person show` / `org show` (`custom_fields` in JSON). Each import that writes (not `--dry-run`, which creates no batch) is recorded as a batch with the cells of every row, so `crm rows <person|org> --import <id> -f csv` is an immutable export of that file: a later keyed import, edit or archive does not change it (batches imported by an older crm have no recorded cells and read the current records, archived ones omitted). It preserves header text, row order, UTF-8 BOM, CRLF/LF and trailing newline. Normalized on the way back: unnecessary quotes (only cells with a comma, quote or line break are quoted) and blank lines in multi-column files. Duplicate or empty headers, ragged rows and broken quoting fail with exit code `2`.
+
+### Tables, Columns & Runs (enrichment pipeline)
+
+A **table** is a named set of rows imported from CSV; **columns** are declared on it; a **run** fills enrich columns in batch through a provider **waterfall**, with a cache, a hard budget and resume.
+
+```bash
+crm table import leads.csv --as leads --key login        # rows keep file order; --key upserts on re-import
+crm column add leads profile --type enrich --waterfall github --from login
+crm column add leads company --type enrich --waterfall github,exa --from login --field company
+crm column add leads label --type formula --expr "{{login}} ({{company}})"
+crm run leads --columns profile,company --dry-run         # estimated calls, cost, cache hits; writes nothing
+crm run leads --columns profile,company --concurrency 8 --budget 2.00
+crm run --resume 3 --budget 5                             # continue run 3 (pending/failed/skipped items only)
+crm run list
+crm run show 3 --items
+crm table show leads --only "company!="                   # filters: = != > >= < <= ~ (regex) !~
+crm table export leads -f csv --only "score>=70"          # csv (default), tsv or json
+crm column list leads                                     # type, definition, estimated cost per row (current provider prices), filled rows
+crm provider list
+crm provider set mine --kind http --url "https://api.example.com/v1/find?q={{input}}" --path data.email \
+  --error-path error --auth-env EXAMPLE_KEY --price 0.002 --cache-ttl 7d
+crm cache clear --provider mine --older-than 7d           # forget cached answers (all of them without flags)
+```
+
+- **Import errors:** `crm table import` and MCP `crm_table_import` (`csv`) follow one rule. A header error — an empty or repeated header, the table's key column missing from the header, a `--key` that differs from the table's — fails the import and writes nothing (exit `2`; a tool error over MCP). A row error — an empty key cell or a key repeated in the file — skips that row and writes the others: the CLI prints each skipped row on stderr and exits `6`, MCP reports it in that row's `results[].error` (`failed` counts them).
+- **Column types:** `input` (imported cells), `formula` (template evaluated on read; `{{col}}`, `{{col.json.path}}`), `enrich` (filled by `crm run`; `--from` is the input column, default the table key; `--field` keeps one value of the answer), `ai` (filled by `crm run` with an LLM answer per row — see below). `crm run --only expr` restricts a run to matching rows.
+- **Waterfall:** providers are tried in order; the first non-empty answer wins, errors and empty answers fall through, and the run item records which provider answered.
+- **Cache:** every answer is cached by (provider, input hash), and the cache is consulted for the whole waterfall before anything is spent — re-running costs `$0`. Entries expire after the provider's `--cache-ttl` (default `30d`; `0` never expires): an expired entry is fetched, and paid, again. `crm cache clear [--provider P] [--older-than D]` deletes entries. An `http` API that reports errors with HTTP 200 needs `--error-path` (the response is an error when that path is set, e.g. `error`) or `--ok-path` (an error unless that path is set, e.g. `success`); such a response is charged, never cached, and fails the item. Without either, the body is taken as the answer (a missing `--path` is cached as "no data").
+- **Budget:** a call is made only after its estimated price is reserved, so the spend crm records never exceeds `--budget`; items that do not fit are marked `skipped`. The budget counts the **configured** prices (`crm provider set --price`, `--price-in/--price-out`); what a provider actually bills follows its own prices, which crm does not see. `--budget` is required for a new run that may spend money (`--dry-run` shows how much); `--resume` reuses the run's saved budget unless `--budget` is given. When an `ai` column's prompt reads a column filled earlier in the same run (`--columns domain,fit` with `{{domain}}` in `fit`), that input is not known before the run, so `--dry-run` reports the worst case as `unbounded (≥ $X)` (`unbounded_items` in JSON) instead of a figure priced on an empty answer.
+- **Retry:** 429, 408, 5xx and network timeouts are retried `--retry` times (default 2) with exponential backoff from `--backoff` (default 500ms), honoring `Retry-After`.
+- **What a failure costs** (what crm records against the budget; every attempt of a retried call is counted):
+  - **`$0`:** an error status other than `404` (4xx, 5xx, `429`), a transport error **before** the request was written (refused connection, DNS failure), a missing credential, Ctrl-C while waiting for the rate limiter, and an enrich provider's 2xx body that is not valid JSON.
+  - **The call's price:** served "no data" answers of enrich providers — a `404`, empty results (`exa` without `results`, `jina` without `data`, an `http` answer where `--path` is missing) — and an `http` 200 flagged by `--error-path`/`--ok-path`. `crm bench` relies on this: unknown domains are paid.
+  - **`llm` tokens:** every `llm` call that got a response is charged the tokens it reports, also when it fails: a reply that is not valid JSON, and an answer still invalid after the one repair request (both calls). A response without `usage` is charged the worst case for that call (prompt bound plus `--max-tokens`). An `llm` error status (including `404`) costs `$0`.
+  - **The estimate (uncertain):** a call that times out or loses its connection **after the request was sent**, or is cut by Ctrl-C at that point, may have been billed. It is counted at its reserved estimate and reported as uncertain (`uncertain` per item, `uncertain_spent` per run, a line after `crm run`). An idempotent `GET` in that state is retried (each attempt counted the same way); a paid `POST` (every `llm` call, `http` providers with `--body`) is not, unless `--retry-uncertain` (CLI) / `retry_uncertain` (MCP), since a retry may pay twice.
+- **Checkpoint/resume:** each row × column item is saved as it finishes; Ctrl-C leaves the run `interrupted` (exit `130`), and `crm run --resume <id>` processes only items that are not done. A run that ends with work left exits non-zero (see [exit codes](#piping--composition)).
+- **One executor per run:** a run is leased by the process executing it (owner + heartbeat, renewed every 10 s and on every checkpoint). A second `crm run --resume` on a run another process is executing is refused with exit `4` naming the holder, so the budget and the stats are never spent or counted twice (`crm_run_start` always creates a new run, so it has no lease to collide with; resume an MCP-started run from the CLI with `crm run --resume <id>`, the id is in `crm_run_status`). If the holder died, its run can be resumed once its heartbeat has been silent for 30 s.
+- **Providers:** `exa` (search, `EXA_API_KEY`, $0.005/call), `exa-contents` ($0.001/page), `jina` (Reader, optional `JINA_API_KEY`, free), `github` (users/orgs API, optional `GITHUB_TOKEN`, free), plus any JSON API as a generic `http` provider. Prices and rates are provider config (`crm provider set`); credentials are read from the environment, never stored. `CRM_PROVIDER_<NAME>_URL` overrides a provider's base URL; for `http` providers it replaces the whole URL template, so include `{{input}}` (and any path or query) in it.
+
+### AI Columns & Qualify (per-row LLM decisions)
+
+An **ai column** asks an LLM one question per row: the prompt is a template whose `{{column}}` placeholders are filled with the row's cells, and the answer is typed. **`crm qualify`** builds that column for you from an ICP criteria file: a `yes`/`no`/`maybe` decision per row and, with `--explain`, a short model-written reason in `<name>_reason`. Both run through `crm run`, so cache, budget, retry, resume and `--dry-run` work the same way.
+
+```bash
+crm provider set llm --model gpt-4o-mini --price-in 0.15 --price-out 0.60   # USD per 1M tokens
+export CRM_LLM_API_KEY=sk-...                                               # never stored
+crm column add leads fit --type ai --prompt files/fit.md --output score:0-100 --explain
+crm run leads --columns fit --budget 0.50
+crm table export leads --only "fit>=70"
+
+crm qualify leads --criteria files/icp.md --explain --dry-run   # estimated calls and worst-case cost; writes nothing
+crm qualify leads --criteria files/icp.md --explain --budget 0.50
+# stderr, 5 rows on a subscription gateway (price 0):
+# qualify leads.qualified: yes 2 · no 2 · maybe 1 · failed 0 · skipped 0 — tokens in 1991 / out 444 · spent $0.00 of $0.50 budget
+crm table export leads -f csv --only "qualified=yes"            # company,…,qualified,qualified_reason
+crm run show 4                                                  # tokens_in / tokens_out per run
+```
+
+- **LLM provider:** the built-in `llm` provider speaks OpenAI-compatible chat completions (`POST {base}/chat/completions`). Base URL from `--base-url`, else `CRM_LLM_BASE_URL`, else `https://api.openai.com/v1`; key from `CRM_LLM_API_KEY`; model from `--model` or `CRM_LLM_MODEL`; prices from `--price-in`/`--price-out` or `CRM_LLM_PRICE_IN`/`CRM_LLM_PRICE_OUT` (required — `0` for a local model or a subscription gateway); `--max-tokens` per call (default 512). More models/gateways: `crm provider set <name> --kind llm …`, then `--waterfall a,b` on the column (the next model is tried when one fails).
+- **Prompt:** `--prompt` is a file (or inline text). Every `{{placeholder}}` must name a column — unknown ones fail at `column add`. A row whose placeholders are all empty is not sent.
+- **Output:** `text`, `score:MIN-MAX` (stored as a number), `enum:a|b|c` (stored as the canonical value), `bool`. The model must answer a JSON object; an invalid answer gets one repair request, then the row fails (resumable).
+- **Cost:** each call is charged the tokens the provider reports × the price. The budget reserves the worst case first — prompt bytes (a token is at least one byte) plus max tokens, twice to cover the repair — so a run never spends more than `--budget`. Cached answers cost `$0` and no tokens.
+- **qualify:** `--name` (default `qualified`), `--explain` (adds `<name>_reason`), `--only` (row filter), `--budget`, `--dry-run`, `--waterfall`, `--concurrency`, `--retry`, `--fields`, `--field-limit`. The prompt is the criteria plus the row's fields. By default those are the `input` and `formula` columns and the `enrich` columns declared with `--field` (one value); `ai` columns, reason columns and raw `enrich` answers (the whole provider JSON — a Jina page can be megabytes) are left out. `--fields a,b` (MCP `fields`) picks them instead, as column names or `column.json.path` (`profile.bio`). Each field is cut to `--field-limit` characters (MCP `field_limit`, default `1000`) with a trailing `…`, and the prompt says so. A column whose name contains `{{` or `}}` cannot be a placeholder: the default selection fails naming it, so pick the others with `--fields`. Braces in the criteria text are kept literally (shown as `{ {x} }`, never read as a row reference). The reason column of `--explain` cannot be the table's key column. `--dry-run` lists the fields. Re-running with the same criteria and fields hits the cache for rows with a successful cached answer (failed or empty rows are asked again); changing the fields changes the prompt, so every row is asked again.
+
+### Push (table rows → people / organizations, deduplicated)
+
+```bash
+crm push leads --to person --dry-run                   # plan: create / update / merge per row; writes nothing
+crm push leads --to person --only "qualified=yes"      # dedupe by email (default for people)
+crm push leads --to org                                # dedupe by domain (default for orgs; URL and email work too)
+crm push companies --to org --dedupe fuzz --threshold 0.9   # similar names: "ACME, Inc." = "Acmé Ltda" = "acme"
+```
+
+Columns map to fields as in `crm import` (aliases such as `name`, `email`, `company`, `website`; other columns become custom fields; `--map col=field` overrides). Each row is matched against existing entities and against the rows pushed before it, so duplicates inside the table merge too. A match keeps its values: the row only fills empty fields and custom fields it does not have yet. Rows without a name or dedupe key are reported per row and skipped. Exit code `2` when no column maps to the email or domain dedupe field (`--dedupe fuzz` reports rows without a name per row instead). `--threshold 0` is honoured (the default is `0.88`).
+
+## Spreadsheet UI (crm ui)
+
+`crm ui` opens your tables as a spreadsheet in the browser, served by the same binary (no Node, no install, works offline). It is a view over the same commands: anything it does, `crm table`, `crm column` and `crm run` can do too, and a run started in a terminal shows up on the page.
+
+```bash
+crm ui                          # serves http://127.0.0.1:8787 and prints the URL to open
+crm ui --open                   # also opens it in the default browser
+crm ui --addr 127.0.0.1:9000    # another port
+CRM_DB=/path/to/other.db crm ui
+```
+
+What the page does:
+
+- **Grid:** pick a table; rows × columns, compact. `enrich`/`ai` columns show a status badge per cell (pending, running, ok, empty, error, uncertain, skipped) from the newest run of that cell; hover a cell for the error (already redacted), provider, cost and run id. Formula columns are computed on read.
+- **Filter:** the box at the top takes the same expressions as `--only` (`fit>=70; company!=`), applied on the server; each column also has a quick text filter.
+- **Run column** (column header menu `⋮`): shows the dry-run estimate first — items, cache hits, rows without input, calls, expected and worst-case cost, and `unbounded` when an `ai` column reads a column filled in the same run. Confirm with a budget (prefilled with the worst case; required whenever the run may spend money). Progress refreshes every second while a run is active: per-cell statuses, done/total, spent vs budget, tokens. **Cancel run** stops a run started from the page (it stays resumable with `crm run --resume <id>`).
+- **Add column:** `input`, `formula`, `enrich` (waterfall, from, field) or `ai` (prompt, output, explain), with an **Estimate** button that prices the column before it is saved. The column is then run from its header menu.
+- **Import CSV:** button or drop a file on the page; choose the table name and, on the first import, the key column (rows with a known key are updated). **Export CSV** downloads the table (filtered rows, every column).
+
+Security (the page can spend money and read every lead):
+
+- Every API request needs the session token. `--token` (or `CRM_UI_TOKEN`) sets it; otherwise a random token is generated on a loopback address and printed once on stderr inside the URL fragment (`http://127.0.0.1:8787/#token=…`). The fragment is never sent to the server, the page moves the token to `sessionStorage` (that tab only) and removes it from the address bar; the server never logs it. A non-loopback `--addr` refuses to start without an explicit token of at least 32 characters and without TLS: serve HTTPS with `--tls-cert`/`--tls-key`, or pass `--behind-tls-proxy` when a TLS proxy in front terminates HTTPS.
+- Host and Origin are checked on every request (DNS rebinding and cross-site requests answer `403`); state-changing requests are `POST`s that must be same-origin (`Sec-Fetch-Site: same-origin` or `none` when the header is present) and carry `Content-Type: application/json` (or `text/csv` for imports) plus the `Authorization: Bearer` header, which a cross-site form cannot send. Bodies are capped at 16 MiB; the page has a strict Content-Security-Policy and renders cell values as text.
+- Ctrl-C stops the server; runs started from the page are left `interrupted` and resumable.
+
+JSON API (all under `/api`, bearer token required), for scripts: `GET /tables`, `GET /tables/{t}[?only=expr]` (columns, rows, per-cell state, live/latest run), `GET /tables/{t}/export[?only=expr]` (CSV), `GET /tables/{t}/runs`, `POST /tables/import?as=t[&key=col]` (CSV body), `POST /tables/{t}/columns`, `POST /tables/{t}/estimate` (`{"columns":[…],"only":[…]}`, or `{"preview":{column spec}}` for an unsaved column), `POST /tables/{t}/runs` (`{"columns":[…],"budget":"0.50"}`, answers `202` with the run), `GET /runs/{id}`, `POST /runs/{id}/cancel`.
+
+The grid is [Tabulator](https://tabulator.info) 6.3.1 (MIT), vendored in `internal/ui/static/vendor/` with its license.
 
 ## Output Formats
 
@@ -207,11 +317,26 @@ crm person list -f csv > contacts.csv
 crm task list --overdue -f json | jq -r '.[] | "OVERDUE: \(.title)"'
 ```
 
-Exit codes: `0` success, `1` error, `2` usage, `3` not found, `4` conflict, `10` database error.
+Exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | success; for `crm run` / `crm qualify`, every item is done (`ok` or `empty`) |
+| `1` | error |
+| `2` | usage error |
+| `3` | not found |
+| `4` | conflict (including a run held by another `crm run`) |
+| `5` | `crm run` / `crm qualify` stopped at its budget (`budget_exhausted`, items `skipped`) |
+| `6` | `crm run` / `crm qualify` completed with `failed` items; `crm table import` skipped rows with errors (the others were written) |
+| `7` | `crm run` / `crm qualify` ended `interrupted` with items `pending`, without a signal |
+| `10` | database error |
+| `128+n` | stopped by signal `n`: `130` for Ctrl-C (SIGINT), `143` for SIGTERM |
+
+For `crm run` / `crm qualify`, codes `5`–`7` and `128+n` still print the run summary; the run is saved and `crm run --resume <id>` continues it. Other commands print no summary (`crm table import` exits `6` after writing the valid rows). Run statuses are `running`, `completed`, `budget_exhausted` and `interrupted`.
 
 ## AI Integration (MCP Server)
 
-`crm` includes a built-in [MCP](https://modelcontextprotocol.io/) server so AI agents can query and update your CRM over a structured protocol.
+`crm` includes a built-in [MCP](https://modelcontextprotocol.io/) server so AI agents can query and update your CRM over a structured protocol: over stdio (what desktop clients spawn) or streamable HTTP.
 
 ### Claude Code
 
@@ -231,20 +356,55 @@ Then copy [`AGENT.md`](AGENT.md) into your project as `CLAUDE.md` so Claude know
 {
   "mcpServers": {
     "crm": {
-      "command": "/opt/homebrew/bin/crm",
+      "command": "/Users/you/go/bin/crm",
       "args": ["mcp", "serve"]
     }
   }
 }
 ```
 
-> **Note:** Use the full path to the binary. Homebrew on Apple Silicon installs to `/opt/homebrew/bin/crm`, on Intel Macs to `/usr/local/bin/crm`. Run `which crm` to find yours.
+> **Note:** Use the full path to the fork's binary: where you put `crm` from `go build`, or `$(go env GOPATH)/bin/crm` after `go install ./cmd/crm`. Run `which crm` to find yours. A Homebrew `crm` is the upstream binary, without the batch tools.
 
 3. Restart Claude Desktop
 
 4. Create a new **Project**, click the project settings, and paste the contents of [`AGENT.md`](AGENT.md) into the project instructions. This teaches Claude when to log interactions, how to maintain contact summaries, tagging conventions, and more.
 
+### Streamable HTTP
+
+```bash
+crm mcp serve --http 127.0.0.1:8765                         # http://127.0.0.1:8765/mcp; prints a generated token on stderr
+CRM_MCP_TOKEN=s3cret crm mcp serve --http 127.0.0.1:8765    # every request needs "Authorization: Bearer s3cret"
+claude mcp add --transport http crm http://127.0.0.1:8765/mcp --header "Authorization: Bearer s3cret"
+```
+
+The HTTP transport always requires a bearer token:
+
+- `--token` (or `CRM_MCP_TOKEN`) sets it. Without one, a loopback address (`127.0.0.1`, `::1`, `localhost`) gets a random token generated at startup and printed on stderr, the way Jupyter does; any other address refuses to start. A request without the right token gets `401`.
+- On a loopback address, only a `Host` of `127.0.0.1`, `localhost` or `[::1]` with the bound port is accepted, so a web page that rebinds its own name to 127.0.0.1 (DNS rebinding) gets `403`. On every address a request with a foreign `Origin` header gets `403` (no `Origin`, `Origin: null` and same-origin requests pass).
+- Bodies are capped at 16 MiB (`413`); slow clients are cut off by read (60 s) and idle (120 s) timeouts.
+- Plain HTTP sends the token in clear text. `--tls-cert` and `--tls-key` serve HTTPS; a bind beyond this machine refuses to start without them unless `--behind-tls-proxy` says a TLS reverse proxy in front terminates HTTPS.
+
+Ctrl-C shuts the server down gracefully; runs started with `wait: false` are left `interrupted` and resumable.
+
 ### Available Tools
+
+**Batch tools** (data plane). They accept arrays where an agent would otherwise loop, and report errors per item instead of failing the call — one call does what the one-entity tools need N calls for. They call the same `internal/service` operations as their CLI twins; a CLI command reports per-item errors on stderr with a non-zero exit code where the tool returns them in its result (for example, a CSV import with skipped rows exits `6`).
+
+| Tool | Description | CLI twin |
+|------|-------------|----------|
+| `crm_table_import` | Create/append a table from `csv` text or a `rows` array of objects; upsert by `key`. A header error fails the call; a row error skips only that row | `crm table import` |
+| `crm_rows_upsert_many` | Upsert many rows into an existing table (each row sets only the cells it names) | — |
+| `crm_table_query` | `filters` (AND), `columns`, `limit` (default 100) / `offset`; returns `total` and `_row` per row | `crm table show` |
+| `crm_column_add` | Declare one or more columns (`input`, `formula`, `enrich`, `ai`) | `crm column add` |
+| `crm_run_start` | Fill enrich/ai columns in one budget-capped run; `dry_run` estimates; `wait: false` returns the run id at once | `crm run` |
+| `crm_run_status` | Status, counts, calls, tokens, spend of several runs; `items: true` adds every item | `crm run show` |
+| `crm_qualify` | yes/no/maybe (+ reason) per row from markdown criteria; `fields` / `field_limit` choose and cap the prompt fields | `crm qualify` |
+| `crm_export` | Filtered rows as `csv`, `tsv` or `json` text | `crm table export` |
+| `crm_push_dedupe` | Table rows → people/orgs, dedupe by email, domain or fuzzy name; `dry_run` | `crm push` |
+
+Budgets are a number or a string of dollars (`0.5`, `"0.50"`). Call-level errors (unknown table, invalid filter, missing budget) come back as tool errors with the message; database and network details stay out of results. Item-level errors (`crm_run_status` with `items`, `crm run show --items`, `run_items.error`) are redacted before they are stored and again when they are returned: URLs lose their query string, credentials and fragment, the request's key/token values and credential-looking values (`Bearer …`, `api_key=…`, `"token": …`) are masked, and each error is capped at 300 bytes. Message sequences (`crm_sequence_render`) belong to slice S4 and are not part of this server yet.
+
+**One-entity tools** (upstream, unchanged):
 
 | Tool | Description |
 |------|-------------|
@@ -266,6 +426,36 @@ Then copy [`AGENT.md`](AGENT.md) into your project as `CLAUDE.md` so Claude know
 | `crm_task_list` | List open tasks |
 | `crm_tag_apply` | Apply a tag |
 | `crm_stats` | CRM summary stats |
+
+### Bench: what a task costs an agent
+
+The number of tool calls is what an agent pays for (each call is a model round trip). `crm bench run` measures it on 10 reproducible tasks in [`bench/`](bench/) — JSON task files plus CSV/markdown fixtures — each executed by an MCP client against a crm server on a fresh in-memory database, with local fake providers (an enrichment API at $0.002/call and an OpenAI-compatible LLM at $0.15 / $0.60 per 1M tokens), so a run is deterministic and free.
+
+```bash
+crm bench run                                  # per task: tool calls, provider calls, tokens, cost, wall time, KB, check
+crm bench run --baseline per-entity            # same tasks with the one-entity tools only
+crm bench run --transport http -f json         # through streamable HTTP + bearer auth instead of in-process
+```
+
+Result of `crm bench run --baseline per-entity` (call counts, tokens and cost are deterministic; wall time is a few ms per task against the local fakes):
+
+| Task | Batch calls | Per-entity calls | Gap | Provider calls | Tokens | Cost | Batch check | Per-entity check |
+|------|------------:|-----------------:|----:|---------------:|-------:|-----:|:-----------:|:----------------:|
+| import-135-csv | 1 | 135 | 135× | 0 | 0 | $0.00 | pass | pass |
+| update-20-titles | 1 | 40 | 40× | 0 | 0 | $0.00 | pass | pass |
+| enrich-industry (135 rows, 27 domains) | 2 | n/a | | 27 | 0 | $0.054 | pass | n/a |
+| enrich-budget-cap ($0.01) | 2 | n/a | | 5 | 0 | $0.01 | pass | n/a |
+| qualify-20 | 1 | n/a | | 20 | 5,175 | $0.001057 | pass | n/a |
+| ai-score-and-filter | 3 | n/a | | 20 | 1,950 | $0.000576 | pass | n/a |
+| find-dedupe-people (40 rows → 30) | 1 | 40 | 40× | 0 | 0 | $0.00 | pass | **FAIL** (35 people) |
+| fuzzy-dedupe-orgs (12 rows → 5) | 1 | n/a | | 0 | 0 | $0.00 | pass | n/a |
+| export-filtered | 1 | 1 | 1× | 0 | 0 | $0.00 | pass | pass |
+| pipeline: import → qualify → push → export | 4 | n/a | | 20 | 4,500 | $0.000957 | pass | n/a |
+| **Total** | **17** (4 on shared tasks) | **216** | **54×** | 92 | 11,625 | $0.06659 | 10/10 | 3/4 |
+
+n/a: the one-entity tools have no tables, columns, providers or organization create. The per-entity dedupe relies on `crm_person_create`'s exact-match duplicate check, so case variants of an email slip through; a filtered read (`export-filtered`) is one call either way, but the batch answer is 0.4 KB of CSV instead of 2 KB of full person records.
+
+A task file has a `setup` (a table for batch mode, entities for per-entity mode, written directly and not counted), a `batch` plan and either a `per_entity` plan or `per_entity_na` with the reason. A plan is `steps` (tool calls; `foreach` repeats calls per CSV row; arguments are templates: `{{file:path}}`, `{{rows:file.csv}}`, `{{row.col}}`, `{{last.0.id}}`) and `checks` (`sql` or a `result` path, compared with `equals`, `gte`, `lte` or `len`). Per-entity plans may only call the upstream tools. `crm bench run` exits `1` when a batch task fails its check; a baseline that gets a task wrong is reported, not fatal.
 
 ### Example AI Workflow
 
@@ -308,13 +498,13 @@ SQLite WAL mode handles concurrent reads well, but avoid writing from two machin
 ## Building from Source
 
 ```bash
-git clone https://github.com/jdanielnd/crm-cli.git
+git clone https://github.com/aryrabelo/crm-cli.git
 cd crm-cli
 go build -o crm ./cmd/crm
 go test ./...
 ```
 
-Requires Go 1.23+. No CGO — builds anywhere Go runs.
+Requires Go 1.24+ (`go.mod`). No CGO — builds anywhere Go runs.
 
 ## Tech Stack
 

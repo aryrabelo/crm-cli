@@ -1,12 +1,8 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/jdanielnd/crm-cli/internal/csvio"
 	"github.com/jdanielnd/crm-cli/internal/format"
@@ -74,21 +70,9 @@ the original column and row order with: crm rows <entity> --import <batch-id>`,
 				return err
 			}
 
-			source := args[0]
-			var data []byte
-			if source == "-" {
-				data, err = io.ReadAll(cmd.InOrStdin())
-			} else {
-				data, err = os.ReadFile(source)
-				if abs, absErr := filepath.Abs(source); absErr == nil {
-					source = abs
-				}
-			}
-			if errors.Is(err, fs.ErrNotExist) {
-				return model.NewExitError(model.ErrNotFound, "file not found: %s", args[0])
-			}
+			data, source, err := readCSVSource(cmd, args[0])
 			if err != nil {
-				return fmt.Errorf("read %s: %w", args[0], err)
+				return err
 			}
 
 			table, err := csvio.Parse(data)

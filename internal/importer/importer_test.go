@@ -141,3 +141,12 @@ func TestRun_KeyValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `--key "nope" matches no column`)
 }
+
+func TestExportColumns_UniqueHeaders(t *testing.T) {
+	cols := importer.ExportColumns("person", []string{"id", "custom.id", "email"})
+	seen := map[string]bool{}
+	for _, c := range cols {
+		require.False(t, seen[c.Header], "duplicate header %q", c.Header)
+		seen[c.Header] = true
+	}
+}

@@ -1,0 +1,20 @@
+{
+  "name": "qualify-20",
+  "description": "Qualify 20 companies against ICP criteria (yes/no/maybe plus a reason per row).",
+  "setup": {
+    "table": {"name": "leads", "csv": "fixtures/leads_20.csv", "key": "company"}
+  },
+  "batch": {
+    "steps": [
+      {"tool": "crm_qualify", "args": {"table": "leads", "criteria": "{{file:fixtures/icp.md}}", "explain": true, "budget": 0.1}}
+    ],
+    "checks": [
+      {"result": -1, "path": "status", "equals": "completed"},
+      {"result": -1, "path": "yes", "equals": 9},
+      {"result": -1, "path": "no", "equals": 9},
+      {"result": -1, "path": "maybe", "equals": 2},
+      {"sql": "SELECT COUNT(*) FROM workspace_rows WHERE json_extract(data, '$.qualified_reason') != ''", "equals": 20}
+    ]
+  },
+  "per_entity_na": "the one-entity tools have no llm columns"
+}
