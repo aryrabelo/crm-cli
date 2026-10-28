@@ -10,7 +10,7 @@ ALTER TABLE import_rows ADD COLUMN cells TEXT;
 -- CellStates (the UI's per-cell run status, polled while a run is active)
 -- takes the newest item of every row × column: this index serves that
 -- lookup without scanning the items of every historical run.
-CREATE INDEX IF NOT EXISTS idx_run_items_cell ON run_items(row_id, column_id, id);
+CREATE INDEX IF NOT EXISTS idx_run_items_cell ON run_items(row_id, column_id);
 
 -- down
 
