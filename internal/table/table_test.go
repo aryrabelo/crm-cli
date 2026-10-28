@@ -42,9 +42,12 @@ func TestImport_KeepsOrderAndUpsertsByKey(t *testing.T) {
 
 	ws, err := s.FindWorkspace(ctx, "leads")
 	require.NoError(t, err)
+	require.NoError(t, s.AddColumn(ctx, &column.Column{WorkspaceID: ws.ID, Name: "profile", Type: column.Enrich,
+		Config: column.Config{Waterfall: []string{"p"}, From: "login"}}))
 	require.NoError(t, s.SetCells(ctx, mustRows(t, s, ws.ID)[1].ID, map[string]any{"profile": map[string]any{"company": "Acme"}}))
 
-	res, err = s.Import(ctx, table.ImportOptions{Name: "leads"}, parse(t, "login,score,city\namy,90,Rio\ncy,50,SP\n"))
+	// The re-import also carries a "profile" header: it names the enrich column, whose cells must stay.
+	res, err = s.Import(ctx, table.ImportOptions{Name: "leads"}, parse(t, "login,score,city,profile\namy,90,Rio,overwritten\ncy,50,SP,seed\n"))
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.Created)
 	assert.Equal(t, 1, res.Updated)

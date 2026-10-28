@@ -232,6 +232,12 @@ func (s *Store) upsert(ctx context.Context, ws *Workspace, src string, columns [
 			data = prev.Data
 		}
 		for _, c := range cells {
+			// A re-import updates input cells only: a header that names an
+			// enrich, ai or formula column must not overwrite its computed
+			// cells.
+			if prev != nil && slices.ContainsFunc(cols, func(o *column.Column) bool { return o.Name == c.Column && o.Type != column.Input }) {
+				continue
+			}
 			data[c.Column] = c.Value
 		}
 		enc, err := json.Marshal(data)
