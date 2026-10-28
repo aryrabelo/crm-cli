@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,7 +20,7 @@ var (
 	urlPattern = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s"'<>]+`)
 	// secretPattern catches credentials echoed in error bodies: "Bearer x",
 	// "api_key=x", `"token": "x"`, "password: x".
-	secretPattern = regexp.MustCompile(`(?i)(bearer\s+|\b(?:api[_-]?key|apikey|access[_-]?token|token|secret|password|passwd|key)"?\s*[:=]\s*"?)([^\s"',;&}]+)`)
+	secretPattern = regexp.MustCompile(`(?i)(bearer\s+|[a-z0-9_-]*(?:api[_-]?key|apikey|access[_-]?token|token|secret|password|passwd|key)"?\s*[:=]\s*"?)([^\s"',;&}]+)`)
 )
 
 // RedactError makes provider error text safe to persist and return: URLs
@@ -51,8 +53,8 @@ func redactURL(raw string) string {
 }
 
 // requestSecrets lists the values of req that may carry a credential: query
-// parameter values, URL userinfo and header values other than content
-// negotiation.
+// parameter values, URL userinfo, string values of a JSON body and header
+// values other than content negotiation.
 func requestSecrets(req *http.Request) []string {
 	var out []string
 	for _, vs := range req.URL.Query() {
@@ -62,6 +64,16 @@ func requestSecrets(req *http.Request) []string {
 		out = append(out, req.URL.User.Username())
 		if p, ok := req.URL.User.Password(); ok {
 			out = append(out, p)
+		}
+	}
+	if req.GetBody != nil {
+		if b, err := req.GetBody(); err == nil {
+			raw, _ := io.ReadAll(io.LimitReader(b, 1<<20))
+			b.Close()
+			var doc any
+			if json.Unmarshal(raw, &doc) == nil {
+				out = appendStrings(out, doc)
+			}
 		}
 	}
 	for name, vs := range req.Header {
@@ -77,6 +89,23 @@ func requestSecrets(req *http.Request) []string {
 	}
 	// Longest first, so a token is masked before any shorter value it contains.
 	slices.SortFunc(out, func(a, b string) int { return len(b) - len(a) })
+	return out
+}
+
+// appendStrings adds every string leaf of a decoded JSON document to out.
+func appendStrings(out []string, v any) []string {
+	switch x := v.(type) {
+	case string:
+		out = append(out, x)
+	case []any:
+		for _, e := range x {
+			out = appendStrings(out, e)
+		}
+	case map[string]any:
+		for _, e := range x {
+			out = appendStrings(out, e)
+		}
+	}
 	return out
 }
 

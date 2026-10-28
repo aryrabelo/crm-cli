@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -65,8 +64,8 @@ func (l *LLM) Bind(c Contract) Adapter { return &boundLLM{llm: l, contract: c} }
 
 // cost converts token counts to money, rounding up.
 func (l *LLM) cost(in, out int64) Cost {
-	micro := in*int64(l.priceIn) + out*int64(l.priceOut)
-	return Cost((micro + 999_999) / 1_000_000)
+	micro := addCost(mulCost(in, l.priceIn), mulCost(out, l.priceOut))
+	return addCost(micro, 999_999) / 1_000_000
 }
 
 type chatMessage struct {
@@ -90,8 +89,8 @@ type chatResponse struct {
 		} `json:"message"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int64 `json:"prompt_tokens"`
-		CompletionTokens int64 `json:"completion_tokens"`
+		PromptTokens     *int64 `json:"prompt_tokens"`
+		CompletionTokens *int64 `json:"completion_tokens"`
 	} `json:"usage"`
 }
 
@@ -138,8 +137,11 @@ func (l *LLM) complete(ctx context.Context, msgs []chatMessage) (string, Cost, e
 	var r chatResponse
 	decodeErr := json.Unmarshal(resp, &r)
 	in, out := promptTokens(msgs), int64(l.maxTokens)
-	if decodeErr == nil && r.Usage != nil {
-		in, out = r.Usage.PromptTokens, r.Usage.CompletionTokens
+	// Usage is trusted only when both counters are present and sane;
+	// otherwise ({}, a missing or negative counter) the worst case stands.
+	if u := r.Usage; decodeErr == nil && u != nil && u.PromptTokens != nil && u.CompletionTokens != nil &&
+		*u.PromptTokens >= 0 && *u.CompletionTokens >= 0 {
+		in, out = *u.PromptTokens, *u.CompletionTokens
 	}
 	addUsage(ctx, in, out)
 	cost := l.cost(in, out)
@@ -172,7 +174,10 @@ func (b *boundLLM) Key(in Input) Hash {
 func (b *boundLLM) Estimate(in Input) Cost {
 	first := promptTokens(b.messages(in.Value))
 	repair := first + int64(b.llm.maxTokens) + int64(len(repairNote)+maxRepairErrorBytes+2*messageOverheadTokens)
-	return b.llm.cost(first+repair, 2*int64(b.llm.maxTokens))
+	max := int64(b.llm.maxTokens)
+	// Enrich rounds each call's cost up separately, so the bound is the sum
+	// of the two rounded costs, not one rounding of the combined tokens.
+	return addCost(b.llm.cost(first, max), b.llm.cost(repair, max))
 }
 
 // InputSized: prompt tokens are priced, so the cost grows with the prompt.
@@ -243,8 +248,18 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// MaxPricePerMTok is the highest accepted llm token price, in USD per 1M
+// tokens; anything above is a typo that would make budget arithmetic absurd.
+const MaxPricePerMTok = 1e6
+
 // usdPerMTok converts a USD-per-1M-tokens price to micro-USD per 1M tokens.
-func usdPerMTok(f float64) Cost { return Cost(math.Round(f * 1e6)) }
+// ok is false for negative, non-finite and above MaxPricePerMTok prices.
+func usdPerMTok(f float64) (Cost, bool) {
+	if f > MaxPricePerMTok {
+		return 0, false
+	}
+	return microUSD(f)
+}
 
 // Usage counts the LLM tokens of the calls made with a context from
 // WithUsage. Safe for concurrent use.

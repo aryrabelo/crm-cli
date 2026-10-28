@@ -39,15 +39,24 @@ func call(ctx context.Context, client *http.Client, req *http.Request) (body []b
 		return e
 	}
 
+	if sch := strings.ToLower(req.URL.Scheme); sch != "http" && sch != "https" {
+		// Retrying cannot fix a malformed URL (e.g. a missing scheme).
+		return nil, false, &Error{Msg: redactRequest(fmt.Sprintf("request URL %q must start with http:// or https://", req.URL.String()), req)}
+	}
+
 	resp, err := client.Do(req.WithContext(httptrace.WithClientTrace(ctx, trace)))
 	if err != nil {
 		return nil, false, unconfirmed(err.Error(), wrote.Load())
 	}
 	defer resp.Body.Close()
 
-	body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, false, unconfirmed("read response: "+err.Error(), true)
+	}
+	if len(body) > maxResponseBytes {
+		// Served (and possibly billed), but unusable: not retryable.
+		return nil, false, &Error{Status: resp.StatusCode, Msg: "response exceeds 16 MiB"}
 	}
 
 	switch {
@@ -57,7 +66,7 @@ func call(ctx context.Context, client *http.Client, req *http.Request) (body []b
 		return nil, false, nil
 	}
 
-	e := &Error{Status: resp.StatusCode, Msg: redactRequest(snippet(body), req)}
+	e := &Error{Status: resp.StatusCode, Msg: snippet(redactRequest(string(body), req))}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests,
 		resp.StatusCode == http.StatusRequestTimeout,
@@ -72,8 +81,9 @@ func call(ctx context.Context, client *http.Client, req *http.Request) (body []b
 	return nil, false, e
 }
 
-func snippet(body []byte) string {
-	s := strings.TrimSpace(string(body))
+// snippet shortens an already redacted error body.
+func snippet(s string) string {
+	s = strings.TrimSpace(s)
 	if len(s) > 200 {
 		s = s[:200] + "…"
 	}
@@ -113,6 +123,9 @@ func rateLimitReset(h http.Header) time.Duration {
 // errMissingAuth is returned when a provider requires a credential that is
 // not set; it is not retryable, so a waterfall falls through immediately.
 func errMissingAuth(name, env string) error {
+	if env == "" {
+		return &Error{Msg: name + ": no credential configured (set --auth-env)"}
+	}
 	return &Error{Msg: fmt.Sprintf("%s: environment variable %s is not set", name, env)}
 }
 
