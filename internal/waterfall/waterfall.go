@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/db/repo"
@@ -106,33 +107,65 @@ func (w *Waterfall) Run(ctx context.Context, in provider.Input, field string, ca
 		if knownEmpty[i] {
 			continue
 		}
-		out, cost, attempts, err := call(ctx, s, in)
-		res.Cost += cost
-		res.Attempts += attempts
-		if attempts > 0 {
-			res.Calls++
-		}
-		if err != nil {
-			if errors.Is(err, ErrHalt) || ctx.Err() != nil {
-				return res, err
-			}
-			res.Errors = append(res.Errors, s.Name+": "+err.Error())
-			continue
-		}
-		v, err := selectField(out, field)
-		if err != nil {
-			res.Errors = append(res.Errors, s.Name+": "+err.Error())
-			continue
-		}
-		if err := w.Cache.Put(ctx, s.Name, keys[i], out, cost); err != nil {
+		done, err := w.callStep(ctx, s, keys[i], in, field, call, &res)
+		if err != nil || done {
 			return res, err
-		}
-		if !value.Empty(v) {
-			res.Value, res.Provider = v, s.Name
-			return res, nil
 		}
 	}
 	return res, nil
+}
+
+// callStep calls step s unless an identical call (same provider, same key)
+// finished while this one waited for it: calls for one key are serialized and
+// the cache is re-checked under the lock, so concurrent rows with the same
+// input pay once. done reports that res holds the answer.
+func (w *Waterfall) callStep(ctx context.Context, s Step, key provider.Hash, in provider.Input, field string, call CallFunc, res *Result) (done bool, err error) {
+	unlock, err := w.Cache.lock(ctx, s.Name, key)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+
+	if out, ok, err := w.Cache.Get(ctx, s.Name, key, s.TTL); err != nil {
+		return false, err
+	} else if ok {
+		v, err := selectField(out, field)
+		if err != nil || value.Empty(v) {
+			return false, nil // cached as "no data" meanwhile: next provider
+		}
+		res.Value, res.Provider = v, s.Name
+		res.CacheHit = res.Calls == 0
+		return true, nil
+	}
+
+	out, cost, attempts, err := call(ctx, s, in)
+	res.Cost += cost
+	res.Attempts += attempts
+	if attempts > 0 {
+		res.Calls++
+	}
+	if err != nil {
+		if errors.Is(err, ErrHalt) || ctx.Err() != nil {
+			return false, err
+		}
+		res.Errors = append(res.Errors, s.Name+": "+err.Error())
+		return false, nil
+	}
+	v, err := selectField(out, field)
+	if err != nil {
+		res.Errors = append(res.Errors, s.Name+": "+err.Error())
+		return false, nil
+	}
+	// The call is paid: an interrupt must not drop its answer, or --resume
+	// would pay for it again.
+	if err := w.Cache.Put(context.WithoutCancel(ctx), s.Name, key, out, cost); err != nil {
+		return false, err
+	}
+	if !value.Empty(v) {
+		res.Value, res.Provider = v, s.Name
+		return true, nil
+	}
+	return false, nil
 }
 
 // Estimate is the projected cost of running a waterfall for one input.
@@ -196,6 +229,53 @@ func (w *Waterfall) Estimate(ctx context.Context, in provider.Input, field strin
 // Cache stores provider answers in the enrichment_cache table.
 type Cache struct {
 	db repo.DBTX
+
+	mu      sync.Mutex
+	flights map[flightKey]*flight
+}
+
+type flightKey struct {
+	provider string
+	key      provider.Hash
+}
+
+// flight is the lock of one (provider, key); refs counts holders and waiters
+// so the entry is dropped when idle.
+type flight struct {
+	sem  chan struct{}
+	refs int
+}
+
+// lock serializes the miss/call/put sequence of one (provider, key). It
+// returns when the caller holds the lock, or with ctx's error.
+func (c *Cache) lock(ctx context.Context, providerName string, key provider.Hash) (unlock func(), err error) {
+	k := flightKey{providerName, key}
+	c.mu.Lock()
+	if c.flights == nil {
+		c.flights = make(map[flightKey]*flight)
+	}
+	f := c.flights[k]
+	if f == nil {
+		f = &flight{sem: make(chan struct{}, 1)}
+		c.flights[k] = f
+	}
+	f.refs++
+	c.mu.Unlock()
+
+	release := func() {
+		c.mu.Lock()
+		if f.refs--; f.refs == 0 {
+			delete(c.flights, k)
+		}
+		c.mu.Unlock()
+	}
+	select {
+	case f.sem <- struct{}{}:
+		return func() { <-f.sem; release() }, nil
+	case <-ctx.Done():
+		release()
+		return nil, ctx.Err()
+	}
 }
 
 // NewCache creates a Cache.
