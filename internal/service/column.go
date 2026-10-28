@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jdanielnd/crm-cli/internal/column"
+	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/model"
 	"github.com/jdanielnd/crm-cli/internal/provider"
 	"github.com/jdanielnd/crm-cli/internal/table"
@@ -139,15 +140,9 @@ func (s *Service) saveColumn(ctx context.Context, c *column.Column, update bool)
 			return err
 		}
 		if c.Type.Runnable() {
-			wf, _, err := c.Waterfall(ctx, provider.NewStore(tx), s.registry, waterfall.NewCache(tx))
-			if err != nil {
+			if c.CostEst, err = s.worstCost(ctx, tx, c); err != nil {
 				return err
 			}
-			est, err := wf.Estimate(ctx, provider.Input{Value: c.Config.Prompt}, c.Config.Field, false)
-			if err != nil {
-				return err
-			}
-			c.CostEst = est.Worst
 		}
 		if update {
 			err = ts.UpdateColumn(ctx, c)
@@ -165,6 +160,35 @@ func (s *Service) saveColumn(ctx context.Context, c *column.Column, update bool)
 }
 
 // Definition summarizes a column config in one line.
+// worstCost is the worst-case price of one cell of c at the provider prices
+// stored now.
+func (s *Service) worstCost(ctx context.Context, db repo.DBTX, c *column.Column) (provider.Cost, error) {
+	wf, _, err := c.Waterfall(ctx, provider.NewStore(db), s.registry, waterfall.NewCache(db))
+	if err != nil {
+		return 0, err
+	}
+	est, err := wf.Estimate(ctx, provider.Input{Value: c.Config.Prompt}, c.Config.Field, false)
+	if err != nil {
+		return 0, err
+	}
+	return est.Worst, nil
+}
+
+// RefreshCostEst recomputes CostEst of the runnable columns in place from the
+// current provider prices, which crm provider set may have changed since the
+// column was saved. A column whose providers cannot be opened keeps its
+// stored value.
+func (s *Service) RefreshCostEst(ctx context.Context, cols []*column.Column) {
+	for _, c := range cols {
+		if !c.Type.Runnable() {
+			continue
+		}
+		if cost, err := s.worstCost(ctx, s.db, c); err == nil {
+			c.CostEst = cost
+		}
+	}
+}
+
 func Definition(c *column.Column) string {
 	switch c.Type {
 	case column.Formula:

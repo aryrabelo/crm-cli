@@ -355,6 +355,7 @@ func (s *Server) viewTable(w http.ResponseWriter, r *http.Request) {
 		}
 		return a
 	}
+	s.svc.RefreshCostEst(ctx, view.Columns)
 	out := viewPayload{Table: ws.Name, Key: ws.KeyColumn, Columns: make([]viewColumn, len(view.Columns)),
 		Rows: make([]viewRow, len(view.Rows)), Live: s.runPayload(live, live), Latest: s.runPayload(latest, live)}
 	for i, c := range view.Columns {

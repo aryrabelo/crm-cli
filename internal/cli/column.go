@@ -110,10 +110,17 @@ func columnListCmd() *cobra.Command {
 		Short: "List the columns of a table with how many rows are filled",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, view, err := loadView(cmd, args[0], nil)
+			db, err := openDB()
 			if err != nil {
 				return err
 			}
+			defer db.Close()
+			svc := newService(db)
+			_, view, err := svc.View(cmd.Context(), args[0], nil)
+			if err != nil {
+				return err
+			}
+			svc.RefreshCostEst(cmd.Context(), view.Columns)
 			data := make([]map[string]any, len(view.Columns))
 			for i, c := range view.Columns {
 				data[i] = service.ColumnData(c, filledCells(view, c.Name), len(view.Cells))

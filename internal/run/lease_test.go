@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -131,4 +132,27 @@ func TestLease_LostLeaseStopsTheRun(t *testing.T) {
 	assert.Equal(t, 0, e.count(t, "SELECT COUNT(*) FROM run_items WHERE status != 'pending'"), "no checkpoint after the takeover")
 	assert.Equal(t, 0, e.count(t, "SELECT spent_micros FROM runs"))
 	assert.Equal(t, 1, e.count(t, "SELECT COUNT(*) FROM runs WHERE owner = 'thief:1:x'"), "the new holder keeps the run")
+}
+
+// Cubic #4380602357: a fatal error mid-run names the interrupted run and the
+// --resume command, and still unwraps to the cause.
+func TestExecute_FatalErrorNamesRunToResume(t *testing.T) {
+	e := setup(t, 2)
+	api := newAPI(t, func(w http.ResponseWriter, q string) { json200(w, `{"v":"`+q+`"}`) })
+	e.provider(t, "p", api, "v", 1000)
+	e.enrich(t, "v", "p")
+	ctx := context.Background()
+	r, err := e.engine.Start(ctx, run.Options{Table: "leads", Columns: []string{"v"}, Budget: 10_000, BudgetSet: true})
+	require.NoError(t, err)
+	_, err = e.db.Exec("CREATE TRIGGER boom BEFORE UPDATE ON run_items BEGIN SELECT RAISE(ABORT, 'disk on fire'); END")
+	require.NoError(t, err)
+
+	_, err = e.engine.Execute(ctx, run.Options{Resume: r.ID, Concurrency: 1})
+	require.Error(t, err)
+	var re *run.RunError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, r.ID, re.ID)
+	assert.Contains(t, err.Error(), "disk on fire")
+	assert.Contains(t, err.Error(), fmt.Sprintf("crm run --resume %d", r.ID))
+	assert.Equal(t, 1, e.count(t, "SELECT COUNT(*) FROM runs WHERE status = 'interrupted'"))
 }

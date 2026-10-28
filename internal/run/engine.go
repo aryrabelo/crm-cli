@@ -23,6 +23,19 @@ import (
 	"github.com/jdanielnd/crm-cli/internal/waterfall"
 )
 
+// RunError is a fatal error that stopped a run after it was persisted: the
+// run is marked interrupted and crm run --resume ID continues it.
+type RunError struct {
+	ID  int64
+	Err error
+}
+
+func (e *RunError) Error() string {
+	return fmt.Sprintf("%v (run %d interrupted; continue with: crm run --resume %d)", e.Err, e.ID, e.ID)
+}
+
+func (e *RunError) Unwrap() error { return e.Err }
+
 // ErrBudgetExhausted halts a waterfall when the next call would break the budget.
 var ErrBudgetExhausted = fmt.Errorf("budget exhausted: %w", waterfall.ErrHalt)
 
@@ -469,7 +482,7 @@ feed:
 	}
 	finished = true
 	if fatal != nil {
-		return nil, fatal
+		return nil, &RunError{ID: r.ID, Err: fatal}
 	}
 	final, err := rs.Get(bg, r.ID)
 	if err != nil {

@@ -216,6 +216,26 @@ func TestRun_EndToEnd(t *testing.T) {
 	assert.Contains(t, stderr, "--budget")
 }
 
+// Cubic #4380602190: the estimated cost per row follows the current provider
+// prices, not the ones in force when the column was added.
+func TestColumnList_CostFollowsProviderPrice(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	path := writeFile(t, dir, "gh.csv", "login\noctocat\n")
+	_, stderr, code := crm(t, dbPath, "table", "import", path, "--as", "gh", "--key", "login")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crm(t, dbPath, "column", "add", "gh", "profile", "--type", "enrich", "--waterfall", "github,exa")
+	require.Equal(t, 0, code, stderr)
+	_, stderr, code = crm(t, dbPath, "provider", "set", "exa", "--price", "0.02")
+	require.Equal(t, 0, code, stderr)
+
+	out, _, code := crm(t, dbPath, "column", "list", "gh", "-f", "json")
+	require.Equal(t, 0, code)
+	cols := jsonRows(t, out)
+	require.Len(t, cols, 2)
+	assert.Equal(t, "$0.02", cols[1]["cost_est"])
+}
+
 func TestProvider_SetAndList(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "crm.db")
 	out, _, code := crm(t, dbPath, "provider", "list", "-f", "json")
