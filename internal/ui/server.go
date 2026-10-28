@@ -66,8 +66,8 @@ func New(db *sql.DB, registry *provider.Registry) *Server {
 func (s *Server) Close() { s.runs.Close() }
 
 // Serve listens on addr until ctx is cancelled (see httpguard.Serve).
-func (s *Server) Serve(ctx context.Context, addr, token string, ready func(net.Addr)) error {
-	return httpguard.Serve(ctx, addr, token, s.Handler, ready)
+func (s *Server) Serve(ctx context.Context, addr, token string, ready func(net.Addr), opts ...httpguard.ServeOption) error {
+	return httpguard.Serve(ctx, addr, token, s.Handler, ready, opts...)
 }
 
 // Handler serves the static page and, behind the bearer token, the API.

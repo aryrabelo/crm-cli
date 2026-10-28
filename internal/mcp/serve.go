@@ -93,6 +93,6 @@ func (s *Server) Handler(guard httpguard.Config) (http.Handler, error) {
 // shuts down gracefully. token is required. On a loopback address only
 // loopback Host and Origin values are accepted (DNS rebinding). ready
 // (optional) receives the bound address once listening.
-func (s *Server) ServeHTTP(ctx context.Context, addr, token string, ready func(net.Addr)) error {
-	return httpguard.Serve(ctx, addr, token, s.Handler, ready)
+func (s *Server) ServeHTTP(ctx context.Context, addr, token string, ready func(net.Addr), opts ...httpguard.ServeOption) error {
+	return httpguard.Serve(ctx, addr, token, s.Handler, ready, opts...)
 }
