@@ -328,7 +328,7 @@ func Run(ctx context.Context, db repo.DBTX, opts Options, table *csvio.Table) (*
 			}
 		}
 
-		if err := imports.AddRow(ctx, batch.ID, i+1, id); err != nil {
+		if err := imports.AddRow(ctx, batch.ID, i+1, id, rec); err != nil {
 			return nil, err
 		}
 		res.Actions = append(res.Actions, action)

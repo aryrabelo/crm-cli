@@ -104,7 +104,7 @@ func TestImportBatchRowsOrderAndArchived(t *testing.T) {
 		ids = append(ids, id)
 		require.NoError(t, cf.Set(ctx, "person", id, "pos", name))
 		// store rows in reverse position order to prove ORDER BY position
-		require.NoError(t, r.AddRow(ctx, b.ID, 3-i, id))
+		require.NoError(t, r.AddRow(ctx, b.ID, 3-i, id, []string{name}))
 	}
 	require.NoError(t, repo.NewPersonRepo(d).Archive(ctx, ids[1]))
 
@@ -118,4 +118,20 @@ func TestImportBatchRowsOrderAndArchived(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, all, 2)
 	assert.Equal(t, []string{"pos"}, keys)
+
+	// Cubic #4380317756: the recorded cells survive edits and archiving, in position order.
+	recs, err := r.BatchRecords(ctx, b)
+	require.NoError(t, err)
+	require.Len(t, recs, 3)
+	assert.Equal(t, []string{"B"}, recs[0].Cells)
+	assert.Equal(t, ids[2], recs[0].EntityID)
+	assert.Equal(t, []string{"C"}, recs[2].Cells)
+
+	// A batch imported before cells were recorded has none.
+	_, err = d.ExecContext(ctx, "UPDATE import_rows SET cells = NULL")
+	require.NoError(t, err)
+	recs, err = r.BatchRecords(ctx, b)
+	require.NoError(t, err)
+	require.Len(t, recs, 3)
+	assert.Nil(t, recs[0].Cells)
 }

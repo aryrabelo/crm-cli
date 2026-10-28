@@ -32,9 +32,10 @@ Without --import: one row per record (ordered by ID) with an "id" column, the
 core fields, then every custom field key. With --import <batch-id>: exactly the
 columns and row order of that import batch; -f csv reproduces the original
 file (header text, BOM, line endings and trailing newline included) as long
-as the imported records are unchanged. The cells are read from the CURRENT
-records, not a snapshot: a later import or edit changes them, and archived
-records are omitted.`,
+as the imported records are unchanged. The cells are the ones recorded when the
+batch was imported: a later import, edit or archive does not change them.
+Batches imported by an older crm have no recorded cells and are read from the
+CURRENT records instead (archived records omitted).`,
 		Example: `  crm rows person -f csv
   crm rows person --import 3 -f csv > roundtrip.csv
   crm rows org --only industry=SaaS -f json`,
@@ -54,6 +55,7 @@ records are omitted.`,
 			ir := repo.NewImportRepo(db)
 			var cols []model.ImportColumn
 			var rows []*model.EntityRow
+			var snapshot []*model.BatchRecord
 			dialect := csvio.DefaultDialect
 			withID := !cmd.Flags().Changed("import")
 
@@ -72,9 +74,15 @@ records are omitted.`,
 				if batch.EntityType != entityType {
 					return model.NewExitError(model.ErrValidation, "import batch %d holds %s records, not %s", batchID, batch.EntityType, entityType)
 				}
-				rows, err = ir.BatchRows(cmd.Context(), batch)
-				if err != nil {
+				if snapshot, err = ir.BatchRecords(cmd.Context(), batch); err != nil {
 					return err
+				}
+				if len(snapshot) > 0 && snapshot[0].Cells == nil {
+					// imported before cells were recorded: current records
+					snapshot = nil
+					if rows, err = ir.BatchRows(cmd.Context(), batch); err != nil {
+						return err
+					}
 				}
 				cols = batch.Columns
 				dialect = csvio.Dialect{BOM: batch.HasBOM, CRLF: batch.CRLF, TrailingNewline: batch.TrailingNewline}
@@ -107,21 +115,33 @@ records are omitted.`,
 
 			var ids []int64
 			var records [][]string
+			n := len(rows)
+			if snapshot != nil {
+				n = len(snapshot)
+			}
 		rowLoop:
-			for _, row := range rows {
+			for i := range n {
+				var rowID int64
 				rec := make([]string, 0, len(header))
-				if withID {
-					rec = append(rec, strconv.FormatInt(row.ID, 10))
-				}
-				for _, c := range cols {
-					rec = append(rec, importer.Cell(entityType, c, row))
+				switch {
+				case snapshot != nil:
+					rowID = snapshot[i].EntityID
+					rec = append(rec, snapshot[i].Cells...)
+				default:
+					rowID = rows[i].ID
+					if withID {
+						rec = append(rec, strconv.FormatInt(rowID, 10))
+					}
+					for _, c := range cols {
+						rec = append(rec, importer.Cell(entityType, c, rows[i]))
+					}
 				}
 				for _, f := range filters {
 					if rec[f.col] != f.value {
 						continue rowLoop
 					}
 				}
-				ids = append(ids, row.ID)
+				ids = append(ids, rowID)
 				records = append(records, rec)
 			}
 

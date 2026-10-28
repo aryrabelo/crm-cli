@@ -156,3 +156,39 @@ func TestExecute_FatalErrorNamesRunToResume(t *testing.T) {
 	assert.Contains(t, err.Error(), fmt.Sprintf("crm run --resume %d", r.ID))
 	assert.Equal(t, 1, e.count(t, "SELECT COUNT(*) FROM runs WHERE status = 'interrupted'"))
 }
+
+// Cubic #4390699930: CellStates reads the newest item per cell through
+// idx_run_items_cell, scoped to the workspace's rows.
+func TestCellStates_NewestItemPerCellUsesIndex(t *testing.T) {
+	e := setup(t, 2)
+	api := newAPI(t, func(w http.ResponseWriter, q string) { json200(w, `{"v":"`+q+`"}`) })
+	e.provider(t, "p", api, "v", 0)
+	e.enrich(t, "v", "p")
+	ctx := context.Background()
+	var last int64
+	for range 2 {
+		res, err := e.engine.Execute(ctx, run.Options{Table: "leads", Columns: []string{"v"}, Concurrency: 1})
+		require.NoError(t, err)
+		last = res.Run.ID
+	}
+	var wsID int64
+	require.NoError(t, e.db.QueryRow("SELECT id FROM workspaces").Scan(&wsID))
+	states, err := run.NewStore(e.db).CellStates(ctx, wsID)
+	require.NoError(t, err)
+	require.Len(t, states, 2)
+	for _, st := range states {
+		assert.Equal(t, last, st.RunID, "the newest run wins")
+	}
+	var plan string
+	rows, err := e.db.Query(`EXPLAIN QUERY PLAN SELECT MAX(id) FROM run_items
+		WHERE row_id IN (SELECT id FROM workspace_rows WHERE workspace_id = ?) GROUP BY row_id, column_id`, wsID)
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var a, b, c int
+		var detail string
+		require.NoError(t, rows.Scan(&a, &b, &c, &detail))
+		plan += detail + "\n"
+	}
+	assert.Contains(t, plan, "idx_run_items_cell")
+}

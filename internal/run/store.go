@@ -369,14 +369,17 @@ type CellState struct {
 }
 
 // CellStates returns, for every row × active column of workspace
-// workspaceID that some run covered, the item of the newest such run.
+// workspaceID that some run covered, the item of the newest such run. A run
+// item's row belongs to its run's workspace, so the rows select the items
+// (idx_run_items_cell) instead of every item of every run.
 func (s *Store) CellStates(ctx context.Context, workspaceID int64) ([]*CellState, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT i.row_id, c.name, i.run_id, i.status, i.error, i.provider, i.cache_hit, i.cost_micros, i.uncertain_micros
 		 FROM run_items i JOIN workspace_columns c ON c.id = i.column_id
 		 WHERE c.archived = 0 AND i.id IN (
-		   SELECT MAX(i2.id) FROM run_items i2 JOIN runs r ON r.id = i2.run_id
-		   WHERE r.workspace_id = ? GROUP BY i2.row_id, i2.column_id)`, workspaceID)
+		   SELECT MAX(i2.id) FROM run_items i2
+		   WHERE i2.row_id IN (SELECT id FROM workspace_rows WHERE workspace_id = ?)
+		   GROUP BY i2.row_id, i2.column_id)`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("cell states: %w", err)
 	}
