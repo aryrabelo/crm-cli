@@ -61,5 +61,27 @@ func TestOpen_MigrationVersion(t *testing.T) {
 	_ = d.QueryRow("PRAGMA user_version").Scan(&version)
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&highest))
 	assert.Equal(t, highest, version)
-	assert.GreaterOrEqual(t, highest, 1003)
+	assert.Equal(t, 1006, highest, "the newest migration (1006_run_items_workspace) is applied")
+}
+
+func TestRunItems_RowAndColumnMustBelongToTheRunsWorkspace(t *testing.T) {
+	d, err := db.Open(":memory:")
+	require.NoError(t, err)
+	defer d.Close()
+
+	for _, q := range []string{
+		"INSERT INTO workspaces (id, uuid, name) VALUES (1, 'u1', 'a'), (2, 'u2', 'b')",
+		"INSERT INTO workspace_rows (id, workspace_id, position, data) VALUES (1, 1, 1, '{}'), (2, 2, 1, '{}')",
+		"INSERT INTO workspace_columns (id, workspace_id, name, type, config, position) VALUES (1, 1, 'c', 'input', '{}', 1), (2, 2, 'c', 'input', '{}', 1)",
+		"INSERT INTO runs (id, uuid, workspace_id, status, columns) VALUES (1, 'r1', 1, 'running', '[]')",
+	} {
+		_, err := d.Exec(q)
+		require.NoError(t, err, q)
+	}
+	_, err = d.Exec("INSERT INTO run_items (run_id, row_id, column_id) VALUES (1, 1, 1)")
+	require.NoError(t, err, "same workspace")
+	_, err = d.Exec("INSERT INTO run_items (run_id, row_id, column_id) VALUES (1, 2, 1)")
+	assert.ErrorContains(t, err, "belong to the workspace of the run", "row of another workspace")
+	_, err = d.Exec("INSERT INTO run_items (run_id, row_id, column_id) VALUES (1, 1, 2)")
+	assert.ErrorContains(t, err, "belong to the workspace of the run", "column of another workspace")
 }
