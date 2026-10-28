@@ -246,3 +246,32 @@ func TestProvider_SetAndList(t *testing.T) {
 		}
 	}
 }
+
+func TestColumnAdd_ReportsFilledOfRows(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	_, stderr, code := crm(t, dbPath, "table", "import", writeFile(t, dir, "l.csv", "name\na\nb\n"), "--as", "l")
+	require.Equal(t, 0, code, stderr)
+	out, stderr, code := crm(t, dbPath, "column", "add", "l", "label", "--type", "formula", "--expr", "{{name}}!", "-f", "json")
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, "2/2", jsonRows(t, out)[0]["filled"])
+}
+
+func TestTable_ListKeylessExportFormatCaseShowJSONOrder(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "crm.db")
+	_, stderr, code := crm(t, dbPath, "table", "import", writeFile(t, dir, "l.csv", "zed,amy\n1,2\n"), "--as", "l")
+	require.Equal(t, 0, code, stderr)
+
+	out, _, code := crm(t, dbPath, "table", "list", "-f", "table")
+	require.Equal(t, 0, code)
+	assert.NotContains(t, out, "<nil>")
+
+	exported, stderr, code := crm(t, dbPath, "table", "export", "l", "-f", "JSON")
+	require.Equal(t, 0, code, stderr)
+	assert.Less(t, strings.Index(exported, `"zed"`), strings.Index(exported, `"amy"`))
+
+	shown, stderr, code := crm(t, dbPath, "table", "show", "l", "-f", "json")
+	require.Equal(t, 0, code, stderr)
+	assert.Less(t, strings.Index(shown, `"zed"`), strings.Index(shown, `"amy"`), "show keeps column order like export")
+}
