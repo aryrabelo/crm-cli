@@ -107,6 +107,9 @@ func TestImportBatchRowsOrderAndArchived(t *testing.T) {
 		require.NoError(t, r.AddRow(ctx, b.ID, 3-i, id, []string{name}))
 	}
 	require.NoError(t, repo.NewPersonRepo(d).Archive(ctx, ids[1]))
+	// Edit an imported entity after the import: its recorded cell must not follow.
+	_, err := d.ExecContext(ctx, "UPDATE people SET first_name = 'Edited' WHERE id = ?", ids[0])
+	require.NoError(t, err)
 
 	rows, err := r.BatchRows(ctx, b)
 	require.NoError(t, err)
@@ -126,6 +129,7 @@ func TestImportBatchRowsOrderAndArchived(t *testing.T) {
 	assert.Equal(t, []string{"B"}, recs[0].Cells)
 	assert.Equal(t, ids[2], recs[0].EntityID)
 	assert.Equal(t, []string{"C"}, recs[2].Cells)
+	assert.Equal(t, ids[0], recs[2].EntityID, "the edited entity keeps its recorded cell")
 
 	// A batch imported before cells were recorded has none.
 	_, err = d.ExecContext(ctx, "UPDATE import_rows SET cells = NULL")
