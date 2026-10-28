@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,6 +32,9 @@ func TestPush_DedupeByEmailAndFuzzyOrgs(t *testing.T) {
 	assert.Equal(t, "error", rows[3]["action"])
 	out, _, _ = crm(t, dbPath, "person", "list", "-f", "json")
 	assert.Empty(t, jsonRows(t, out))
+	quiet, stderr, code := crm(t, dbPath, "push", "leads", "--to", "person", "--dry-run", "--quiet")
+	require.Equal(t, 0, code, stderr)
+	assert.Empty(t, strings.TrimSpace(quiet), "dry-run --quiet prints no placeholder 0 ids")
 
 	out, stderr, code = crm(t, dbPath, "push", "leads", "--to", "person", "-f", "json")
 	require.Equal(t, 0, code, stderr)
