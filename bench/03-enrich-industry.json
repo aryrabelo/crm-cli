@@ -1,0 +1,22 @@
+{
+  "name": "enrich-industry",
+  "description": "Add the industry of every lead's company from an enrichment API (27 distinct domains, 2 unknown).",
+  "setup": {
+    "table": {"name": "leads", "csv": "fixtures/people_135.csv", "key": "email"}
+  },
+  "batch": {
+    "steps": [
+      {"tool": "crm_column_add", "args": {"table": "leads", "columns": [
+        {"name": "industry", "type": "enrich", "waterfall": ["firmo"], "from": "domain", "field": "industry"}
+      ]}},
+      {"tool": "crm_run_start", "args": {"table": "leads", "columns": ["industry"], "budget": 1, "concurrency": 1}}
+    ],
+    "checks": [
+      {"result": -1, "path": "run.status", "equals": "completed"},
+      {"result": -1, "path": "run.ok", "equals": 125},
+      {"result": -1, "path": "run.empty", "equals": 10},
+      {"result": -1, "path": "run.calls", "equals": 27}
+    ]
+  },
+  "per_entity_na": "the one-entity tools cannot call enrichment providers"
+}

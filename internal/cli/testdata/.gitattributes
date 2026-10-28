@@ -1,0 +1,2 @@
+# Round-trip fixtures are compared byte for byte (BOM, CRLF): never convert line endings.
+*.csv -text

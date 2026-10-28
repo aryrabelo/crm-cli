@@ -1,0 +1,17 @@
+{
+  "name": "fuzzy-dedupe-orgs",
+  "description": "Turn 12 company rows without domains into organizations: 5 companies spelled with Inc/LLC/Ltda/GmbH, case and typo variants.",
+  "setup": {
+    "table": {"name": "companies", "csv": "fixtures/orgs_fuzzy.csv"}
+  },
+  "batch": {
+    "steps": [
+      {"tool": "crm_push_dedupe", "args": {"table": "companies", "to": "org", "dedupe": "fuzz"}}
+    ],
+    "checks": [
+      {"sql": "SELECT COUNT(*) FROM organizations WHERE archived = 0", "equals": 5},
+      {"result": -1, "path": "merged", "equals": 7}
+    ]
+  },
+  "per_entity_na": "no one-entity tool creates organizations"
+}

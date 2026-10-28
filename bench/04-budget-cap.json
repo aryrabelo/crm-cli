@@ -1,0 +1,21 @@
+{
+  "name": "enrich-budget-cap",
+  "description": "Enrich with a $0.01 hard budget ($0.002 per call): the run stops before overspending and stays resumable.",
+  "setup": {
+    "table": {"name": "leads", "csv": "fixtures/people_135.csv", "key": "email"}
+  },
+  "batch": {
+    "steps": [
+      {"tool": "crm_column_add", "args": {"table": "leads", "columns": [
+        {"name": "industry", "type": "enrich", "waterfall": ["firmo"], "from": "domain", "field": "industry"}
+      ]}},
+      {"tool": "crm_run_start", "args": {"table": "leads", "columns": ["industry"], "budget": "0.01", "concurrency": 1}}
+    ],
+    "checks": [
+      {"result": -1, "path": "run.status", "equals": "budget_exhausted"},
+      {"result": -1, "path": "run.spent_usd", "lte": 0.01},
+      {"result": -1, "path": "run.skipped", "gte": 1}
+    ]
+  },
+  "per_entity_na": "the one-entity tools cannot call enrichment providers"
+}

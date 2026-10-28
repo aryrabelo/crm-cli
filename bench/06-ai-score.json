@@ -1,0 +1,21 @@
+{
+  "name": "ai-score-and-filter",
+  "description": "Score 20 companies 0-100 with an ai column, then list the ones scoring 70 or more.",
+  "setup": {
+    "table": {"name": "leads", "csv": "fixtures/leads_20.csv", "key": "company"}
+  },
+  "batch": {
+    "steps": [
+      {"tool": "crm_column_add", "args": {"table": "leads", "columns": [
+        {"name": "fit", "type": "ai", "prompt": "Lead {{company}} ({{domain}}): {{description}}", "output": "score:0-100"}
+      ]}},
+      {"tool": "crm_run_start", "args": {"table": "leads", "columns": ["fit"], "budget": 0.1}},
+      {"tool": "crm_table_query", "args": {"table": "leads", "filters": ["fit>=70"], "columns": ["company", "fit"]}}
+    ],
+    "checks": [
+      {"result": 1, "path": "run.ok", "equals": 20},
+      {"result": -1, "path": "total", "equals": 9}
+    ]
+  },
+  "per_entity_na": "the one-entity tools have no llm columns"
+}
