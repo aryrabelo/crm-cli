@@ -129,7 +129,7 @@ func NormalizeName(s string, org bool) string {
 		for {
 			n := len(words)
 			switch {
-			case n > 1 && slices.Contains(legalSuffixes, words[n-1]) && !(n == 2 && words[0] == "the"):
+			case n > 1 && slices.Contains(legalSuffixes, words[n-1]) && (n != 2 || words[0] != "the"):
 				words = words[:n-1]
 				continue
 			case n > 2 && words[n-2] == "s" && words[n-1] == "a":
