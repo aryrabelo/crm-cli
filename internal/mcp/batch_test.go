@@ -126,7 +126,7 @@ func TestBatchTools_ListedAlongsideEntityTools(t *testing.T) {
 		"crm_table_query", "crm_column_add", "crm_run_start", "crm_run_status", "crm_qualify", "crm_export", "crm_push_dedupe"} {
 		assert.Contains(t, names, n)
 	}
-	assert.Len(t, names, 27, "18 entity tools + 9 batch tools")
+	assert.Len(t, names, 33, "18 entity tools + 15 fork tools")
 }
 
 func TestTableImportUpsertQuery(t *testing.T) {

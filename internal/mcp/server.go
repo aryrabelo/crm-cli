@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/model"
@@ -16,7 +17,7 @@ import (
 
 // registerEntityTools registers the upstream per-entity CRM tools (one
 // person, org, deal, task... per call).
-func registerEntityTools(s *server.MCPServer, db *sql.DB) {
+func registerEntityTools(s *server.MCPServer, db *sql.DB, claims *repo.TaskClaimRepo) {
 	pr := repo.NewPersonRepo(db)
 	or := repo.NewOrgRepo(db)
 	ir := repo.NewInteractionRepo(db)
@@ -187,13 +188,14 @@ func registerEntityTools(s *server.MCPServer, db *sql.DB) {
 
 	s.AddTool(
 		gomcp.NewTool("crm_task_list",
-			gomcp.WithDescription("List open tasks"),
+			gomcp.WithDescription("List open tasks, most urgent first (due date, priority, oldest), each with its claim (claim_* keys)"),
 			gomcp.WithNumber("person_id", gomcp.Description("Filter by person ID")),
 			gomcp.WithBoolean("overdue", gomcp.Description("Show only overdue tasks")),
 			gomcp.WithBoolean("include_completed", gomcp.Description("Include completed tasks")),
+			gomcp.WithBoolean("waiting", gomcp.Description("Show only tasks waiting on the owner, with claim_link")),
 			gomcp.WithNumber("limit", gomcp.Description("Max results")),
 		),
-		taskListHandler(tr),
+		taskListHandler(tr, claims),
 	)
 
 	// Tag tools
@@ -705,12 +707,13 @@ func taskCreateHandler(tr *repo.TaskRepo) server.ToolHandlerFunc {
 	}
 }
 
-func taskListHandler(tr *repo.TaskRepo) server.ToolHandlerFunc {
+func taskListHandler(tr *repo.TaskRepo, claims *repo.TaskClaimRepo) server.ToolHandlerFunc {
 	return func(ctx context.Context, req gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		filters := model.TaskFilters{
 			Limit:            req.GetInt("limit", 50),
 			Overdue:          req.GetBool("overdue", false),
 			IncludeCompleted: req.GetBool("include_completed", false),
+			Waiting:          req.GetBool("waiting", false),
 		}
 
 		if pid := int64(req.GetInt("person_id", 0)); pid > 0 {
@@ -721,7 +724,19 @@ func taskListHandler(tr *repo.TaskRepo) server.ToolHandlerFunc {
 		if err != nil {
 			return mcpError(err)
 		}
-		return jsonResult(tasks)
+		ids := make([]int64, len(tasks))
+		for i, t := range tasks {
+			ids[i] = t.ID
+		}
+		byTask, err := claims.ForTasks(ctx, ids, time.Now())
+		if err != nil {
+			return mcpError(err)
+		}
+		out := make([]model.TaskWithClaim, len(tasks))
+		for i, t := range tasks {
+			out[i] = model.TaskWithClaim{Task: t, Claim: byTask[t.ID]}
+		}
+		return jsonResult(out)
 	}
 }
 

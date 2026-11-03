@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/format"
@@ -69,7 +70,7 @@ func registerTaskCommands(rootCmd *cobra.Command) {
 	taskCmd.AddCommand(taskEditCmd())
 	taskCmd.AddCommand(taskDoneCmd())
 	taskCmd.AddCommand(taskDeleteCmd())
-
+	registerTaskClaimCommands(taskCmd)
 	rootCmd.AddCommand(taskCmd)
 }
 
@@ -127,7 +128,7 @@ func taskAddCmd() *cobra.Command {
 
 func taskListCmd() *cobra.Command {
 	var personID, dealID int64
-	var overdue, all bool
+	var overdue, all, waiting bool
 	var limit int
 
 	cmd := &cobra.Command{
@@ -144,6 +145,7 @@ func taskListCmd() *cobra.Command {
 				Limit:            limit,
 				Overdue:          overdue,
 				IncludeCompleted: all,
+				Waiting:          waiting,
 			}
 			if cmd.Flags().Changed("person") {
 				filters.PersonID = &personID
@@ -158,7 +160,31 @@ func taskListCmd() *cobra.Command {
 				return err
 			}
 
-			return format.Output(os.Stdout, resolveFormat(), tasksToMaps(tasks), taskColumns, flagQuiet)
+			now := time.Now()
+			claims := repo.NewTaskClaimRepo(db)
+			ids := make([]int64, len(tasks))
+			for i, t := range tasks {
+				ids[i] = t.ID
+			}
+			byTask, err := claims.ForTasks(cmd.Context(), ids, now)
+			if err != nil {
+				return err
+			}
+			stale, err := claims.Stale(cmd.Context(), now)
+			if err != nil {
+				return err
+			}
+			printStale(os.Stderr, stale)
+
+			data := make([]map[string]any, len(tasks))
+			for i, t := range tasks {
+				data[i] = taskWithClaimToMap(t, byTask[t.ID])
+			}
+			cols := taskClaimColumns
+			if waiting {
+				cols = taskWaitingColumns
+			}
+			return format.Output(os.Stdout, resolveFormat(), data, cols, flagQuiet)
 		},
 	}
 
@@ -166,6 +192,7 @@ func taskListCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&dealID, "deal", 0, "filter by deal ID")
 	cmd.Flags().BoolVar(&overdue, "overdue", false, "show only overdue tasks")
 	cmd.Flags().BoolVar(&all, "all", false, "include completed tasks")
+	cmd.Flags().BoolVar(&waiting, "waiting", false, "show only tasks waiting on the owner, with their links")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max results")
 
 	return cmd
@@ -193,9 +220,13 @@ func taskShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			byTask, err := repo.NewTaskClaimRepo(db).ForTasks(cmd.Context(), []int64{id}, time.Now())
+			if err != nil {
+				return err
+			}
 
-			data := []map[string]any{taskToMap(task)}
-			return format.Output(os.Stdout, resolveFormat(), data, taskColumns, flagQuiet)
+			data := []map[string]any{taskWithClaimToMap(task, byTask[id])}
+			return format.Output(os.Stdout, resolveFormat(), data, taskClaimColumns, flagQuiet)
 		},
 	}
 }
