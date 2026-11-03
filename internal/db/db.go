@@ -41,9 +41,12 @@ func Open(dbPath string) (*sql.DB, error) {
 }
 
 func setPragmas(db *sql.DB) error {
+	// busy_timeout first: the other pragmas (journal_mode = WAL above all)
+	// take locks, and without a timeout a process opening the database
+	// while others do fails at once with "database is locked".
 	pragmas := []string{
-		"PRAGMA journal_mode = WAL",
 		"PRAGMA busy_timeout = 5000",
+		"PRAGMA journal_mode = WAL",
 		"PRAGMA synchronous = NORMAL",
 		"PRAGMA foreign_keys = ON",
 		"PRAGMA cache_size = -64000",
