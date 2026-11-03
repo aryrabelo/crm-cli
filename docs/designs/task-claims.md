@@ -1,7 +1,7 @@
 # crm-cli: task claims for parallel agents
 
 *   **Author:** aryrabelo
-*   **Status:** Proposed
+*   **Status:** Implemented on branch `feat/task-claims` (work-order phases 1-4); cut-over (phase 7) pending
 *   **Date:** 2026-11-03
 *   **Predecessor:** EGM brainstorm of 2026-11-03. The owner's decisions are quoted, with their date, where they are used.
 

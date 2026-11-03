@@ -15,6 +15,25 @@ This is **[aryrabelo/crm-cli](https://github.com/aryrabelo/crm-cli)**, a fork of
 
 The upstream binaries (`brew install jdanielnd/tap/crm`, GitHub Releases of jdanielnd/crm-cli, `go install github.com/jdanielnd/crm-cli/cmd/crm@latest`) do **not** have these commands. The fork keeps upstream's Go module path (`github.com/jdanielnd/crm-cli`), so `go install github.com/aryrabelo/crm-cli/cmd/crm@<ref>` fails with `module declares its path as: github.com/jdanielnd/crm-cli but was required as: github.com/aryrabelo/crm-cli`. Build it from a checkout instead (see [Install](#install)).
 
+### Installing a fork build over Homebrew (runbook)
+
+`crm --version` prints `dev` for both the Homebrew and a plain `go build` binary, so the build below stamps `fork-<sha>`. Follow this runbook whenever a fork build carries new migrations (task claims add `1008_task_claims.sql`):
+
+1. Stop every agent. `pgrep -fl 'crm mcp serve'` and `lsof "$HOME/.crm/crm.db"` both print nothing.
+2. `sqlite3 "$HOME/.crm/crm.db" ".backup $HOME/.crm/crm.db.bak-<date>-pre-fork"` (double quotes, so the shell expands `$HOME`; `~` does not expand inside quotes).
+3. Rehearse on a copy of the backup: `<fork binary> --db <copy> task list` succeeds, and `sqlite3 <copy> "select version from schema_migrations"` returns 1 and 1001-1008.
+4. Migrate the live DB with one process: `<fork binary> task list` (it uses `CRM_DB` when set, `internal/cli/root.go:72`; check that it points at `"$HOME/.crm/crm.db"` or is unset). Run the step 3 check on the live DB.
+5. `brew uninstall crm`.
+6. `go build -ldflags "-X main.version=fork-$(git rev-parse --short HEAD)" -o ~/.local/bin/crm ./cmd/crm`.
+7. `which -a crm` prints only `~/.local/bin/crm`; `crm --version` prints `fork-<sha>`; every MCP client config that starts `crm mcp serve` uses `~/.local/bin/crm` or a PATH that contains it.
+8. Restart agents. Repeat the `pgrep` check: every `crm mcp serve` runs `~/.local/bin/crm`.
+
+**Rollback (primary).** Stop agents, `rm ~/.local/bin/crm`, `brew install jdanielnd/tap/crm`, keep the database. Upstream code never reads `task_claims`, and `tasks` is unchanged, so claims are ignored. Agents go back to working one at a time: the Homebrew binary ignores claims, so parallel agents would duplicate again.
+
+**Rollback (fallback).** Restore the step 2 backup. Writes made after step 2 are lost.
+
+Do not run `brew install crm` again except to roll back.
+
 ## Features
 
 - **People & Organizations** — contacts with full profiles, linked to companies
@@ -112,13 +131,30 @@ crm deal pipeline                        # summary by stage
 
 ```bash
 crm task add "Follow up on proposal" --person 1 --due 2026-03-14 --priority high
-crm task list                            # open tasks
+crm task list                            # open tasks, most urgent first, with STATE/HOLDER/IDLE
 crm task list --overdue                  # past due
 crm task list --all                      # include completed
+crm task list --waiting                  # tasks waiting on you, with their LINK
 crm task show 1
 crm task edit 1 --priority medium
-crm task done 1                          # mark completed
+crm task done 1                          # mark completed (anyone; drops the claim)
 crm task delete 1
+```
+
+**Order.** `list` (and `crm_task_list`, `crm status`, `crm context`) sorts by due calendar date (overdue first; date-only and datetime values compare by date, unparseable ones count as undated), then priority (high, medium, low), then oldest created; undated tasks come last.
+
+**Claims (fork): several agents on one task list.** An agent holds a task before acting on it, so two agents never work the same task. `--as` is the agent's locator, `<runtime>:<where>:<session>` (at least three non-empty colon-separated segments, at most 200 bytes), unique per live session: `$HERDR_PANE_ID` in a bora pane, `$PI_SESSION_ID` for OMP outside bora.
+
+```bash
+crm task next --as omp:~/Sites/app:w19V:p6      # hold the most urgent free task due today or undated; again = same task; exit 3 if none
+crm task claim 14 --as omp:~/Sites/app:w19V:p6  # hold a chosen task (future-dated too); exit 4 if held or waiting
+crm task note 14 --as omp:~/Sites/app:w19V:p6 "creating Gmail draft"   # before each external side effect; exit 4 = hold lost, stop
+crm task wait 14 --as omp:~/Sites/app:w19V:p6 --link <draft URL> --note "draft ready"  # hand it to the owner; no agent picks it
+crm task release 14 --note "first draft rejected"   # free a waiting task (anyone); a held one needs --as <holder>
+crm task claim 14 --as <locator> --take-over        # replace a holder idle 2h or more, after checking it at its locator
+```
+
+A hold idle for 2h (no claim, note or take-over) is stale: `next` and `list` print `stale: #14 held by <locator>, idle 2h41m, note: …` on stderr, and crm never takes it over by itself. Exit codes: 2 invalid input (`--as`, missing `--link`, a held task released without `--as`), 3 unknown/completed/archived task or empty queue, 4 any other conflict (the message names the state, holder and idle time).
 ```
 
 ### Tags
@@ -423,9 +459,20 @@ Budgets are a number or a string of dollars (`0.5`, `"0.50"`). Call-level errors
 | `crm_deal_create` | Create a deal |
 | `crm_deal_update` | Update deal stage/fields |
 | `crm_task_create` | Create a task |
-| `crm_task_list` | List open tasks |
+| `crm_task_list` | List open tasks, most urgent first, with their `claim_*` keys; `waiting: true` lists tasks waiting on the owner |
 | `crm_tag_apply` | Apply a tag |
 | `crm_stats` | CRM summary stats |
+
+**Task claim tools** (fork). The same rules as `crm task next|claim|note|wait|release`; results are the task object plus `claim_*` keys.
+
+| Tool | Description | CLI twin |
+|------|-------------|----------|
+| `crm_task_next` | Hold the most urgent free task due today or undated; returns `{"task": … \| null, "stale_holds": […]}`, never an error for an empty queue | `crm task next` |
+| `crm_task_claim` | Hold a chosen task; `take_over` replaces a holder idle 2h or more | `crm task claim` |
+| `crm_task_note` | Progress note on a task you hold; resets its idle time | `crm task note` |
+| `crm_task_wait` | Hand a task you hold to the owner, with `link` | `crm task wait` |
+| `crm_task_release` | Free a task (held: holder only; waiting: anyone) | `crm task release` |
+| `crm_task_done` | Complete a task (anyone); drops its claim | `crm task done` |
 
 ### Bench: what a task costs an agent
 

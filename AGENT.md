@@ -88,7 +88,22 @@ When creating follow-ups:
 - Set realistic due dates based on what was discussed
 - Use priority levels meaningfully: **high** for time-sensitive commitments, **medium** for standard follow-ups, **low** for nice-to-haves
 - Link tasks to the relevant person and deal when applicable
-- Check `crm_task_list` with `overdue: true` periodically and remind the user
+- Remind the user of overdue tasks; to act on one, hold it first.
+
+## Working tasks with other agents
+
+Several agents may work the same task list at once. Follow this procedure, with `--as <locator>` on the CLI or `as` on the MCP tools:
+
+1. `crm task next` (`crm_task_next`), or, to work ahead on a future-dated task, pick it from `crm task list` and `crm task claim <id>` (`crm_task_claim`); on exit 4 (a conflict) pick another.
+2. `crm task note <id> "<what you are about to do>"` (`crm_task_note`) before each external side effect (send, draft, message). Exit 4 means you lost the hold: stop.
+3. Do the side effect.
+4. `crm task wait <id> --link <artifact>` when the owner must act (a draft to approve), `crm task done <id>` when finished, or `crm task release <id>` to give it back.
+
+Rule: never act on a task you do not hold.
+
+The locator is `<runtime>:<where>:<session>` (at least three non-empty colon-separated segments, at most 200 bytes, no control characters). The last segment must be unique per live session: `$HERDR_PANE_ID` in a bora pane, `$PI_SESSION_ID` for OMP outside bora, your thread id in OpenBot (`openbot:Pessoal:<thread>`).
+
+On a stale report, check the holder at its locator before `claim --take-over`.
 
 ## Relationships
 

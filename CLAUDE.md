@@ -45,6 +45,7 @@ internal/
     relate.go                  # Person-to-person relationships
     deal.go                    # Deals & pipeline
     task.go                    # Tasks & follow-ups
+    task_claim.go              # crm task next/claim/note/wait/release, list claim columns, stale report (fork: task claims)
     search.go                  # Cross-entity full-text search
     context.go                 # Person context briefing
     status.go                  # Dashboard summary
@@ -72,13 +73,15 @@ internal/
       1005_uncertain_cost.sql  # run_items.uncertain_micros: calls sent without a response, charged at the estimate (fork: data plane)
       1006_run_items_workspace.sql # Trigger: a run item's row and column belong to the run's workspace (fork: data plane)
       1007_import_snapshot_cell_index.sql # import_rows.cells (immutable rows --import) + idx_run_items_cell (fork: data plane)
+      1008_task_claims.sql     # task_claims + held-per-locator index + cleanup trigger on tasks (fork: task claims)
     repo/
       person.go                # Person repository
       org.go                   # Organization repository
       interaction.go           # Interaction repository
       tag.go                   # Tag repository (polymorphic)
       deal.go                  # Deal repository
-      task.go                  # Task repository
+      task.go                  # Task repository (shared column list, urgency order)
+      task_claim.go            # TaskClaimRepo: one autocommit statement per claim write (fork: task claims)
       custom_field.go          # Custom field repository
       relationship.go          # Person-to-person relationship repository
       import.go                # Import batches + raw entity writes (fork: data plane)
@@ -96,6 +99,7 @@ internal/
     server.go                  # Upstream one-entity tools (registerEntityTools)
     serve.go                   # Server type: New, ServeStdio, Handler/ServeHTTP behind internal/httpguard
     batch.go                   # Batch data-plane tools (arrays in, per-item errors), wait=false runs via run.Tracker
+    task_claim.go              # crm_task_next/claim/note/wait/release/done (fork: task claims)
   service/                     # Data-plane operations shared by CLI commands, MCP batch tools and crm ui (fork)
     service.go / table.go / column.go / run.go / qualify.go
     cells.go                   # Per-cell newest run item + live/latest run of a table (crm ui)
@@ -353,6 +357,7 @@ Start with `database/sql` and manual `Scan()` calls. If boilerplate becomes exce
 - **Test helpers** — create a `testutil` package or test helpers in `*_test.go` files for common setup (open DB, run migrations, seed data)
 - **`-race` flag** — always run tests with race detector in CI
 - **Test binary** — for integration tests, build once with `go build` in `TestMain`, reuse across subtests
+- **Claim races use separate processes** — the atomic pick of `crm task next` is proven by starting 16 `crm` processes at once (`internal/cli/task_claim_test.go`), not goroutines over the single pooled connection
 
 ```go
 func TestPersonRepo_Create(t *testing.T) {
@@ -382,6 +387,7 @@ func TestPersonRepo_Create(t *testing.T) {
 - Uses `mcp-go`: stdio by default, streamable HTTP at `/mcp` with `crm mcp serve --http`. HTTP always goes through `internal/httpguard` (reuse it for any new HTTP server): mandatory bearer token (`--token`/`CRM_MCP_TOKEN`, else generated and printed on stderr for loopback binds; non-loopback binds need an explicit token), loopback Host allowlist, foreign-Origin rejection, body cap, read/idle timeouts
 - **Never write to stdout** in MCP mode — stdout is the JSON-RPC transport. All logging goes to `stderr`.
 - One-entity tools are thin wrappers calling repository methods; batch tools are thin wrappers calling `internal/service` and report errors per item (`errText`) instead of failing the call
+- Task claim tools (`internal/mcp/task_claim.go`): `crm_task_next`, `crm_task_claim`, `crm_task_note`, `crm_task_wait`, `crm_task_release`, `crm_task_done`, thin wrappers over `repo.TaskClaimRepo`; `crm_task_next` returns `{task, stale_holds}` and is never an error for an empty queue
 - Return errors as MCP content with `isError: true` — don't return Go errors from tool handlers
 - Handle graceful shutdown via context cancellation
 - Tool input is JSON-decoded into Go structs

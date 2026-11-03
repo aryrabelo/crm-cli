@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `httpguard.WrapPublic` (Host/Origin checks and body cap without the token, for data-free static files) and `httpguard.Serve` (listen, serve, graceful shutdown), shared by `crm mcp serve --http` and `crm ui`
 - `crm mcp serve --http` and `crm ui` take `--tls-cert` / `--tls-key` to serve HTTPS. A bind beyond loopback over plain HTTP sends the bearer token in clear text, so it now refuses to start unless TLS is configured or `--behind-tls-proxy` says a TLS proxy in front terminates HTTPS
 - Migration `1007_import_snapshot_cell_index.sql`: `import_rows.cells` (the CSV cells of every imported row) and `idx_run_items_cell` (cheap per-cell run status for the UI)
+- Task claims for parallel agents: `crm task next|claim|note|wait|release --as <locator>`, `claim --take-over` for holds idle 2h or more, `crm task list --waiting`, a stale-hold report on stderr of `next` and `list`, and six MCP tools (`crm_task_next`, `crm_task_claim`, `crm_task_note`, `crm_task_wait`, `crm_task_release`, and `crm_task_done`, which MCP lacked). Design: `docs/designs/task-claims.md`
+- Migration `1008_task_claims.sql`: `task_claims` (one row per claimed task, CHECKs on holder/link per state, one held task per locator) and a trigger that drops the claim when any binary completes or archives the task
 
 ### Changed
 
@@ -46,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI data-plane commands (`table import|show|export`, `column add|list`, `run`, `run show`, `qualify`) and the MCP batch tools share one `internal/service` layer
 - `crm mcp serve` without `--http` keeps the stdio transport; it stops when stdin closes or on Ctrl-C
 - The background-run tracker of MCP `wait: false` moved to `run.Tracker`, shared with `crm ui`
+- Task order is due calendar date (overdue first), then priority, then oldest created, in `crm task list`, `crm_task_list`, `crm status`, `crm context` and the `crm_context` MCP tool (was due date as text, then newest created); `crm task list`/`show` and `crm_task_list` rows carry `claim_*` keys
+- The database connection sets `busy_timeout` before the other pragmas, so processes opening the database at the same moment wait instead of failing with `database is locked`
 
 ### Fixed
 
