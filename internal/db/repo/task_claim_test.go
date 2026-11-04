@@ -315,8 +315,9 @@ func TestClosedTasks_NotFoundAndTriggerClears(t *testing.T) {
 				"release": func() error { _, _, err := f.claims.Release(ctx, id, strp(locA), nil, claimNow); return err },
 				"take":    func() error { _, _, err := f.claims.TakeOver(ctx, id, locB, claimNow); return err },
 			} {
-				exitIs(t, op(), model.ErrNotFound)
-				_ = name
+				t.Run(name, func(t *testing.T) {
+					exitIs(t, op(), model.ErrNotFound)
+				})
 			}
 
 			next := f.add(t, "next", "", "medium")
