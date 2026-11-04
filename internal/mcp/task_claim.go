@@ -48,18 +48,21 @@ type taskDoneArgs struct {
 	ID int64 `json:"id" jsonschema_description:"Task ID"`
 }
 
-// taskNextResult is never an error result, so the agent sees stale holds
-// even when the queue is empty (task null).
+// taskNextResult is never an error result once the pick is settled, so the
+// agent learns the task it holds even when the stale report cannot be read
+// (stale_error), and sees stale holds even when the queue is empty (task
+// null).
 type taskNextResult struct {
 	Task       *model.TaskWithClaim `json:"task"`
 	StaleHolds []model.StaleHold    `json:"stale_holds"`
+	StaleError string               `json:"stale_error,omitempty"`
 }
 
 func (s *Server) registerTaskClaimTools() {
 	s.mcp.AddTool(gomcp.NewTool("crm_task_next",
 		gomcp.WithDescription("Hold the most urgent free task due today or earlier (or undated), in one atomic step. "+
 			"Calling it again with the same as returns the task you already hold. task is null when nothing is free; "+
-			"stale_holds lists holds idle 2h or more."+claimRule),
+			"stale_holds lists holds idle 2h or more; stale_error, when present, says why they could not be read."+claimRule),
 		gomcp.WithInputSchema[taskNextArgs]()), s.taskNext)
 	s.mcp.AddTool(gomcp.NewTool("crm_task_claim",
 		gomcp.WithDescription("Hold a chosen task (future-dated ones too). take_over replaces a holder idle 2h or more."+claimRule),
@@ -96,11 +99,13 @@ func (s *Server) taskNext(ctx context.Context, req gomcp.CallToolRequest) (*gomc
 	if err != nil && !errors.Is(err, model.ErrNotFound) {
 		return mcpError(err)
 	}
-	stale, serr := s.claims.Stale(ctx, now)
-	if serr != nil {
-		return mcpError(serr)
+	res := taskNextResult{StaleHolds: []model.StaleHold{}}
+	// The pick is already committed: a failed stale read must not hide it.
+	if stale, serr := s.claims.Stale(ctx, now); serr != nil {
+		res.StaleError = "stale holds unavailable: " + errText(serr)
+	} else {
+		res.StaleHolds = stale
 	}
-	res := taskNextResult{StaleHolds: stale}
 	if err == nil {
 		res.Task = &model.TaskWithClaim{Task: t, Claim: c}
 	}

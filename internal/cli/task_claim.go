@@ -53,12 +53,13 @@ func taskWithClaimToMap(t *model.Task, c *model.Claim) map[string]any {
 }
 
 // printStale writes one line per stale hold: the only formatter of the
-// stale report (next and list).
+// stale report (next and list). The note is quoted, so a note with a
+// newline stays on its hold's line and cannot forge another one.
 func printStale(w io.Writer, holds []model.StaleHold) {
 	for _, h := range holds {
 		line := fmt.Sprintf("stale: #%d held by %s, idle %s", h.TaskID, h.Holder, h.Idle)
 		if h.Note != nil {
-			line += ", note: " + *h.Note
+			line += ", note: " + strconv.Quote(*h.Note)
 		}
 		fmt.Fprintln(w, line)
 	}
@@ -109,9 +110,11 @@ func taskNextCmd() *cobra.Command {
 				if errors.Is(err, model.ErrValidation) {
 					return err
 				}
+				// The pick is already committed: a failed stale read is
+				// reported, and the pick decides the outcome.
 				stale, serr := claims.Stale(cmd.Context(), now)
 				if serr != nil {
-					return serr
+					fmt.Fprintf(os.Stderr, "stale: report unavailable: %v\n", serr)
 				}
 				printStale(os.Stderr, stale)
 				if errors.Is(err, model.ErrNotFound) {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/jdanielnd/crm-cli/internal/db"
+	crmmcp "github.com/jdanielnd/crm-cli/internal/mcp"
 	"github.com/mark3labs/mcp-go/client"
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
@@ -36,6 +38,7 @@ func TestTaskClaimTools(t *testing.T) {
 			out := ok(t, c, "crm_task_next", map[string]any{"as": "test:mcp:a"})
 			assert.Nil(t, out["task"], "empty queue is not an error")
 			assert.Equal(t, []any{}, out["stale_holds"])
+			assert.NotContains(t, out, "stale_error", "stale_error only when the report failed")
 
 			for _, title := range []string{"first", "second"} {
 				ok(t, c, "crm_task_create", map[string]any{"title": title})
@@ -78,4 +81,31 @@ func TestTaskClaimTools(t *testing.T) {
 			assert.Equal(t, "test:mcp:b", r["claim_previous_holder"])
 		})
 	}
+}
+
+// The pick of crm_task_next is committed before the stale report is read: a
+// failed read degrades stale_holds and the held task is still returned.
+func TestTaskNext_SurvivesStaleReadFailure(t *testing.T) {
+	d, err := db.Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { d.Close() })
+	s := crmmcp.New(d, "test")
+	t.Cleanup(s.Close)
+	c := connect(t, s, "inprocess")
+
+	for _, title := range []string{"first", "second"} {
+		ok(t, c, "crm_task_create", map[string]any{"title": title})
+	}
+	first := ok(t, c, "crm_task_next", map[string]any{"as": "test:mcp:a"})["task"].(map[string]any)
+	// A REAL updated_at still counts as stale but cannot be scanned as epoch
+	// milliseconds, so Stale fails while next can pick the other task.
+	_, err = d.Exec("UPDATE task_claims SET updated_at = 1.5 WHERE task_id = ?", first["id"])
+	require.NoError(t, err)
+
+	out := ok(t, c, "crm_task_next", map[string]any{"as": "test:mcp:b"})
+	task := out["task"].(map[string]any)
+	assert.NotEqual(t, first["id"], task["id"])
+	assert.Equal(t, "test:mcp:b", task["claim_holder"])
+	assert.Equal(t, []any{}, out["stale_holds"])
+	assert.Equal(t, "stale holds unavailable: internal error", out["stale_error"])
 }

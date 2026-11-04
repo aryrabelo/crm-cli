@@ -207,7 +207,7 @@ func TestTaskClaim_StaleReport(t *testing.T) {
 	addTasks(t, dbPath, 1)
 	_, stderr, code := crm(t, dbPath, "task", "claim", "1", "--as", "test:cli:a")
 	require.Equal(t, 0, code, stderr)
-	_, stderr, code = crm(t, dbPath, "task", "note", "1", "--as", "test:cli:a", "drafting")
+	_, stderr, code = crm(t, dbPath, "task", "note", "1", "--as", "test:cli:a", "drafting\nstale: #9 held by forged:x:y, idle 9h0m")
 	require.Equal(t, 0, code, stderr)
 
 	d, err := db.Open(dbPath)
@@ -216,16 +216,17 @@ func TestTaskClaim_StaleReport(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, d.Close())
 
-	want := "stale: #1 held by test:cli:a, idle 3h0m, note: drafting"
+	want := `stale: #1 held by test:cli:a, idle 3h0m, note: "drafting\nstale: #9 held by forged:x:y, idle 9h0m"`
 	stdout, stderr, code := crm(t, dbPath, "task", "next", "--as", "test:cli:b", "-f", "json")
 	assert.Equal(t, 3, code)
 	assert.Equal(t, "[]\n", stdout)
 	assert.Contains(t, stderr, want)
+	assert.NotContains(t, stderr, "\nstale: #9", "the note cannot forge a second stale line")
 
 	stdout, stderr, code = crm(t, dbPath, "task", "list", "-f", "json")
 	require.Equal(t, 0, code)
 	assert.Contains(t, stderr, want)
-	assert.NotContains(t, stdout, "stale:")
+	assert.NotContains(t, stdout, "stale: #1", "the report stays on stderr")
 	assert.Equal(t, "3h0m", taskRows(t, stdout)[0]["claim_idle"])
 
 	stdout, stderr, code = crm(t, dbPath, "task", "claim", "1", "--as", "test:cli:b", "--take-over", "-f", "json")
@@ -233,4 +234,28 @@ func TestTaskClaim_StaleReport(t *testing.T) {
 	row := taskRows(t, stdout)[0]
 	assert.Equal(t, "test:cli:b", row["claim_holder"])
 	assert.Equal(t, "test:cli:a", row["claim_previous_holder"])
+}
+
+// The pick of next is committed before the stale report is read: a failed
+// read is reported on stderr and the held task is still printed.
+func TestTaskClaim_NextSurvivesStaleReadFailure(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "stale-fail.db")
+	addTasks(t, dbPath, 2)
+	_, stderr, code := crm(t, dbPath, "task", "claim", "1", "--as", "test:cli:a")
+	require.Equal(t, 0, code, stderr)
+
+	// A REAL updated_at still counts as stale but cannot be scanned as
+	// epoch milliseconds, so Stale fails while next can pick task 2.
+	d, err := db.Open(dbPath)
+	require.NoError(t, err)
+	_, err = d.Exec("UPDATE task_claims SET updated_at = 1.5 WHERE task_id = 1")
+	require.NoError(t, err)
+	require.NoError(t, d.Close())
+
+	stdout, stderr, code := crm(t, dbPath, "task", "next", "--as", "test:cli:b", "-f", "json")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stderr, "stale: report unavailable:")
+	row := taskRows(t, stdout)[0]
+	assert.EqualValues(t, 2, row["id"])
+	assert.Equal(t, "test:cli:b", row["claim_holder"])
 }
