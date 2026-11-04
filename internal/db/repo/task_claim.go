@@ -399,13 +399,27 @@ func (r *TaskClaimRepo) Release(ctx context.Context, id int64, as *string, note 
 	}
 }
 
+// forTasksChunk bounds the ids bound in one ForTasks query, well under
+// SQLite's limit on bound parameters (32766).
+const forTasksChunk = 500
+
 // ForTasks returns the claims of the given tasks, keyed by task id; tasks
-// without a claim are absent.
+// without a claim are absent. Any number of ids works: they are looked up
+// forTasksChunk at a time.
 func (r *TaskClaimRepo) ForTasks(ctx context.Context, ids []int64, now time.Time) (map[int64]*model.Claim, error) {
 	out := make(map[int64]*model.Claim, len(ids))
-	if len(ids) == 0 {
-		return out, nil
+	for len(ids) > 0 {
+		n := min(len(ids), forTasksChunk)
+		if err := r.forTasks(ctx, ids[:n], now, out); err != nil {
+			return nil, err
+		}
+		ids = ids[n:]
 	}
+	return out, nil
+}
+
+// forTasks adds the claims of ids (at least one) to out.
+func (r *TaskClaimRepo) forTasks(ctx context.Context, ids []int64, now time.Time, out map[int64]*model.Claim) error {
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
@@ -414,18 +428,18 @@ func (r *TaskClaimRepo) ForTasks(ctx context.Context, ids []int64, now time.Time
 		`SELECT c.task_id, `+claimSelectColumns+` FROM task_claims c
 		 WHERE c.task_id IN (?`+strings.Repeat(", ?", len(ids)-1)+`)`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("read task claims: %w", err)
+		return fmt.Errorf("read task claims: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
 		var cc claimCols
 		if err := rows.Scan(append([]any{&id}, cc.dest()...)...); err != nil {
-			return nil, fmt.Errorf("scan task claim: %w", err)
+			return fmt.Errorf("scan task claim: %w", err)
 		}
 		out[id] = cc.claim(now)
 	}
-	return out, rows.Err()
+	return rows.Err()
 }
 
 // Stale returns the holds idle StaleAfter or longer, longest idle first.

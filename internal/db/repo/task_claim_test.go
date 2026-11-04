@@ -359,6 +359,31 @@ func TestStaleAndForTasks(t *testing.T) {
 	assert.NotContains(t, claims, free)
 }
 
+// A list without limit can pass more ids than SQLite binds in one statement
+// (32766); claims on both sides of the cut are still found.
+func TestForTasks_MoreIDsThanBoundParameters(t *testing.T) {
+	ctx := context.Background()
+	f := newClaimFixture(t)
+	first := f.add(t, "first", "", "medium")
+	last := f.add(t, "last", "", "medium")
+	_, _, err := f.claims.Claim(ctx, first, locA, claimNow)
+	require.NoError(t, err)
+	_, _, err = f.claims.Claim(ctx, last, locB, claimNow)
+	require.NoError(t, err)
+
+	ids := []int64{first}
+	for i := int64(0); len(ids) < 40000; i++ {
+		ids = append(ids, 1_000_000+i) // ids no task has
+	}
+	ids = append(ids, last)
+
+	claims, err := f.claims.ForTasks(ctx, ids, claimNow)
+	require.NoError(t, err)
+	assert.Len(t, claims, 2)
+	assert.Equal(t, locA, *claims[first].Holder)
+	assert.Equal(t, locB, *claims[last].Holder)
+}
+
 func TestHeldIndexIsTheLastGuard(t *testing.T) {
 	f := newClaimFixture(t)
 	a := f.add(t, "a", "", "medium")
