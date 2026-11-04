@@ -21,6 +21,22 @@ func NewTaskRepo(db *sql.DB) *TaskRepo {
 	return &TaskRepo{db: db}
 }
 
+// taskSelectColumns is the column list scanTask reads, qualified with the
+// alias t so queries that join task_claims (which also has updated_at)
+// stay unambiguous. Every task query selects FROM tasks t.
+const taskSelectColumns = `t.id, t.uuid, t.title, t.description, t.person_id, t.deal_id, t.due_at, t.priority,
+	t.completed, t.completed_at, t.archived, t.created_at, t.updated_at`
+
+// taskUrgencyOrder is the order of task list and of the claim pick (next):
+// most overdue first by calendar date (date() normalizes date-only and
+// datetime values; values it cannot parse count as undated), then
+// priority, then oldest created.
+const taskUrgencyOrder = `CASE WHEN date(t.due_at) IS NULL THEN 1 ELSE 0 END,
+	date(t.due_at) ASC,
+	CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+	t.created_at ASC,
+	t.id ASC`
+
 func scanTask(row interface{ Scan(...any) error }) (*model.Task, error) {
 	var t model.Task
 	err := row.Scan(
@@ -53,9 +69,8 @@ func (r *TaskRepo) Create(ctx context.Context, input model.CreateTaskInput) (*mo
 // FindByID returns a task by ID.
 func (r *TaskRepo) FindByID(ctx context.Context, id int64) (*model.Task, error) {
 	t, err := scanTask(r.db.QueryRowContext(ctx,
-		`SELECT id, uuid, title, description, person_id, deal_id, due_at, priority,
-		        completed, completed_at, archived, created_at, updated_at
-		 FROM tasks WHERE id = ? AND archived = 0`, id))
+		`SELECT `+taskSelectColumns+`
+		 FROM tasks t WHERE t.id = ? AND t.archived = 0`, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("task %d: %w", id, model.ErrNotFound)
@@ -67,27 +82,29 @@ func (r *TaskRepo) FindByID(ctx context.Context, id int64) (*model.Task, error) 
 
 // FindAll returns tasks with optional filters.
 func (r *TaskRepo) FindAll(ctx context.Context, filters model.TaskFilters) ([]*model.Task, error) {
-	query := `SELECT id, uuid, title, description, person_id, deal_id, due_at, priority,
-	                 completed, completed_at, archived, created_at, updated_at
-	          FROM tasks WHERE archived = 0`
+	query := `SELECT ` + taskSelectColumns + `
+	          FROM tasks t WHERE t.archived = 0`
 	var args []any
 
 	if filters.PersonID != nil {
-		query += " AND person_id = ?"
+		query += " AND t.person_id = ?"
 		args = append(args, *filters.PersonID)
 	}
 	if filters.DealID != nil {
-		query += " AND deal_id = ?"
+		query += " AND t.deal_id = ?"
 		args = append(args, *filters.DealID)
 	}
 	if filters.Overdue {
-		query += " AND completed = 0 AND due_at IS NOT NULL AND due_at < datetime('now')"
+		query += " AND t.completed = 0 AND t.due_at IS NOT NULL AND t.due_at < datetime('now')"
 	}
 	if !filters.IncludeCompleted {
-		query += " AND completed = 0"
+		query += " AND t.completed = 0"
+	}
+	if filters.Waiting {
+		query += " AND EXISTS (SELECT 1 FROM task_claims c WHERE c.task_id = t.id AND c.state = 'waiting')"
 	}
 
-	query += " ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC, created_at DESC"
+	query += " ORDER BY " + taskUrgencyOrder
 
 	if filters.Limit > 0 {
 		query += " LIMIT ?"

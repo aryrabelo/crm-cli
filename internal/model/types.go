@@ -1,5 +1,13 @@
 package model
 
+import (
+	"fmt"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+)
+
 // Person represents a contact in the CRM.
 type Person struct {
 	ID        int64   `json:"id"`
@@ -216,7 +224,88 @@ type TaskFilters struct {
 	DealID           *int64
 	Overdue          bool
 	IncludeCompleted bool
+	Waiting          bool // only tasks whose claim is waiting on the owner
 	Limit            int
+}
+
+// Claim states (fork: task claims).
+const (
+	ClaimFree    = "free"
+	ClaimHeld    = "held"
+	ClaimWaiting = "waiting"
+)
+
+// StaleAfter is how long a hold may go without a claim, note or take-over
+// before another agent may take it over.
+const StaleAfter = 2 * time.Hour
+
+// MaxLocatorBytes bounds the length of a locator.
+const MaxLocatorBytes = 200
+
+// Claim is the task_claims row of a task, in the flat claim_* keys a task
+// row carries in every output.
+type Claim struct {
+	State          string        `json:"claim_state"`
+	Holder         *string       `json:"claim_holder,omitempty"`
+	PreviousHolder *string       `json:"claim_previous_holder,omitempty"`
+	Note           *string       `json:"claim_note,omitempty"`
+	Link           *string       `json:"claim_link,omitempty"`
+	UpdatedAt      string        `json:"claim_updated_at"`
+	Idle           string        `json:"claim_idle"`
+	IdleFor        time.Duration `json:"-"`
+}
+
+// TaskWithClaim is a task plus its claim; a nil Claim adds no keys.
+type TaskWithClaim struct {
+	*Task
+	*Claim
+}
+
+// StaleHold is a held task idle StaleAfter or longer.
+type StaleHold struct {
+	TaskID int64   `json:"task_id"`
+	Title  string  `json:"title"`
+	Holder string  `json:"holder"`
+	Idle   string  `json:"idle"`
+	Note   *string `json:"note,omitempty"`
+}
+
+// ValidLocator reports whether s is <runtime>:<where>:<session>: valid
+// UTF-8 (JSON output would rewrite a bad byte, so the printed holder would
+// not match --as), at least three colon-separated non-empty segments, at
+// most MaxLocatorBytes bytes, no control characters.
+func ValidLocator(s string) bool {
+	if s == "" || len(s) > MaxLocatorBytes || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	segs := strings.Split(s, ":")
+	if len(segs) < 3 {
+		return false
+	}
+	for _, seg := range segs {
+		if seg == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// FormatIdle prints an idle time truncated to the minute as hours and
+// minutes (2h41m, 2h0m, 41m); under one minute, or negative, is 0m.
+func FormatIdle(d time.Duration) string {
+	if d < time.Minute {
+		return "0m"
+	}
+	m := int64(d / time.Minute)
+	if m < 60 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return fmt.Sprintf("%dh%dm", m/60, m%60)
 }
 
 // Relationship represents a person-to-person link.

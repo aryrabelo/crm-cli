@@ -61,7 +61,7 @@ func TestOpen_MigrationVersion(t *testing.T) {
 	_ = d.QueryRow("PRAGMA user_version").Scan(&version)
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&highest))
 	assert.Equal(t, highest, version)
-	assert.Equal(t, 1007, highest, "the newest migration (1007_import_snapshot_cell_index) is applied")
+	assert.Equal(t, 1008, highest, "the newest migration (1008_task_claims) is applied")
 }
 
 func TestRunItems_RowAndColumnMustBelongToTheRunsWorkspace(t *testing.T) {

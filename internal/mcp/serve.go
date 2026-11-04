@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/jdanielnd/crm-cli/internal/db/repo"
 	"github.com/jdanielnd/crm-cli/internal/httpguard"
 	"github.com/jdanielnd/crm-cli/internal/provider"
 	"github.com/jdanielnd/crm-cli/internal/run"
@@ -23,6 +24,8 @@ type Server struct {
 	mcp    *server.MCPServer
 	svc    *service.Service
 	runs   *run.Tracker
+	tasks  *repo.TaskRepo
+	claims *repo.TaskClaimRepo
 	entity map[string]bool
 }
 
@@ -52,13 +55,16 @@ func New(db *sql.DB, version string, opts ...Option) *Server {
 		mcp:    server.NewMCPServer("crm", version, server.WithToolCapabilities(false)),
 		svc:    service.New(db, o.registry),
 		runs:   run.NewTracker(),
+		tasks:  repo.NewTaskRepo(db),
+		claims: repo.NewTaskClaimRepo(db),
 		entity: map[string]bool{},
 	}
-	registerEntityTools(s.mcp, db)
+	registerEntityTools(s.mcp, db, s.claims)
 	for name := range s.mcp.ListTools() {
 		s.entity[name] = true
 	}
 	s.registerBatchTools()
+	s.registerTaskClaimTools()
 	return s
 }
 
