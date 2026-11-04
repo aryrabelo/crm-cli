@@ -154,8 +154,7 @@ crm task release 14 --note "first draft rejected"   # free a waiting task (anyon
 crm task claim 14 --as <locator> --take-over        # replace a holder idle 2h or more, after checking it at its locator
 ```
 
-A hold idle for 2h (no claim, note or take-over) is stale: `next` and `list` print `stale: #14 held by <locator>, idle 2h41m, note: …` on stderr, and crm never takes it over by itself. Exit codes: 2 invalid input (`--as`, missing `--link`, a held task released without `--as`), 3 unknown/completed/archived task or empty queue, 4 any other conflict (the message names the state, holder and idle time).
-```
+A hold idle for 2h (no state-changing claim, note or take-over; repeating a claim you already hold does not count) is stale: `next` and `list` print `stale: #14 held by <locator>, idle 2h41m, note: "…"` on stderr (the note quoted), and crm never takes it over by itself. If that report cannot be read, `next` says so on stderr and still prints the task it picked. Exit codes: 2 invalid input (`--as`, missing `--link`, a held task released without `--as`), 3 unknown/completed/archived task or empty queue, 4 any other conflict (the message says which; when the task is held or waiting it names the holder or link and the idle time, when the locator already holds another task it names that task).
 
 ### Tags
 
@@ -467,7 +466,7 @@ Budgets are a number or a string of dollars (`0.5`, `"0.50"`). Call-level errors
 
 | Tool | Description | CLI twin |
 |------|-------------|----------|
-| `crm_task_next` | Hold the most urgent free task due today or undated; returns `{"task": … \| null, "stale_holds": […]}`, never an error for an empty queue | `crm task next` |
+| `crm_task_next` | Hold the most urgent free task due today or undated; returns `{"task": … \| null, "stale_holds": […]}` (plus `stale_error` when the stale report cannot be read), never an error for an empty queue | `crm task next` |
 | `crm_task_claim` | Hold a chosen task; `take_over` replaces a holder idle 2h or more | `crm task claim` |
 | `crm_task_note` | Progress note on a task you hold; resets its idle time | `crm task note` |
 | `crm_task_wait` | Hand a task you hold to the owner, with `link` | `crm task wait` |

@@ -24,7 +24,7 @@ The design also covers the switch of the live database and binary from upstream 
 *   **hold / holder:** an agent working a task, and that agent.
 *   **claim:** the `task_claims` row of a task, and the `crm task claim` command.
 *   **locator:** the string an agent passes with `--as` to say who and where it is (grammar under "Locator").
-*   **stale:** a hold is stale when `now − updated_at ≥ 2h`, that is, no claim, note or take-over for 2 hours. Every other mention of the 2h rule means this.
+*   **stale:** a hold is stale when `now − updated_at ≥ 2h`, that is, no state-changing claim, note or take-over for 2 hours (repeating a claim or `next` the locator already holds does not refresh `updated_at`). Every other mention of the 2h rule means this.
 *   **waiting:** the state of a task whose artifact waits for the owner.
 *   **free:** a task with no claim row, or with a row whose `state = 'free'`.
 
@@ -112,7 +112,7 @@ There is also a delivery problem. The binary in use is upstream Homebrew 0.1.6, 
 
 *   **Given**: Agent A claimed #14 at 10:00, wrote its last note at 10:20, and its session crashed.
 *   **When**: At 12:30, agent B runs `next`.
-*   **Then**: `next` hands B a different free task and prints `stale: #14 held by <A>, idle 2h10m, note: …` on stderr.
+*   **Then**: `next` hands B a different free task and prints `stale: #14 held by <A>, idle 2h10m, note: "…"` on stderr.
 *   **When**: B (or the owner) checks A's pane, finds it dead, and runs `crm task claim 14 --as <B> --take-over`.
 *   **Then**: B holds #14 and A is its `previous_holder`.
 
@@ -274,10 +274,10 @@ t.id ASC
 **Exit rules.**
 - Invalid input (`--as` grammar, missing `--link`, a held task released without `--as`) → 2.
 - Unknown, completed or archived task → 3. An empty queue on `next` → 3.
-- Any other failed precondition → 4, with a message naming the current state, holder and idle time: the task is held or waiting; the locator already holds another task (`claim`, `--take-over`); the hold is not stale; the caller is not the holder; the task is already free.
+- Any other failed precondition → 4, with a message that says which precondition failed: the task is held or waiting (the message names the holder or link and the idle time); the locator already holds another task (`claim`, `--take-over`; the message names that task); the hold is not stale (holder and idle time); the caller is not the holder (holder or link, and idle time); the task is already free (the message says only that).
 
 **Locator.** Required on `next`, `claim`, `note`, `wait`, and `release` of a held task. Validated by `model.ValidLocator`, called inside the repository methods, so the CLI and MCP share one check.
-- Grammar, enforced (exit 2 otherwise): `<runtime>:<where>:<session>`, at least three colon-separated segments, none empty, at most 200 bytes, no control characters (any rune for which `unicode.IsControl` is true, including tab and newline).
+- Grammar, enforced (exit 2 otherwise): `<runtime>:<where>:<session>`, valid UTF-8 (JSON output would replace a bad byte, so the printed holder would no longer match `--as`), at least three colon-separated segments, none empty, at most 200 bytes, no control characters (any rune for which `unicode.IsControl` is true, including tab and newline).
 - The session segment must be unique per live agent session. Where each runtime gets it (checked on 2026-11-03 on the owner's machine):
 
   | Runtime | Session part | Example locator |
@@ -302,8 +302,8 @@ t.id ASC
 - **Idle format.** `model.FormatIdle(d time.Duration) string` is the one formatter. It truncates to the minute and prints hours and minutes only: `2h41m`, `2h0m`, `41m`; anything under one minute (or negative, from a clock step) prints `0m`. The repository calls it when it fills `Claim.Idle` and `StaleHold.Idle`; the CLI and MCP only print what the repository returns.
 - **Table columns.** `list` and `show` print `ID`, `Title`, `Due`, `Priority`, `Done`, `Person`, then `State`, `Holder`, `Idle` (go-pretty prints headers upper-case: `STATE`, `HOLDER`, `IDLE`). `list --waiting` adds `Link` last. `next`, `claim`, `note` and `release` print the `list` columns; `wait` prints the `list --waiting` columns.
 - **Empty queue.** `next` exits 3. With `-f json` it writes `[]` and a newline to stdout itself; in table, CSV, TSV and `-q` it writes nothing. It does not call `format.Output`, which would print `No results.`.
-- **Stale report.** `next` and `list` write one line per stale hold to stderr, in every format: `stale: #14 held by <locator>, idle 2h41m, note: …` (`, note: …` only when there is a note). Nothing stale is added to stdout. crm never acts on stale holds. `printStale` in `internal/cli/task_claim.go` (file 7) is the only formatter of these lines; `list` (file 8) calls it.
-- **MCP.** Tools return the same row shape through `jsonResult` (`internal/mcp/server.go:233`), and errors through `mcpError` (`server.go:295`). `crm_task_next` returns a non-error result `{"task": {...} | null, "stale_holds": [...]}`, so the agent sees stale holds even when the queue is empty. `stale_holds` is `[]`, never `null`; each element is a `StaleHold` (`task_id`, `title`, `holder`, `idle`, `note` when present).
+- **Stale report.** `next` and `list` write one line per stale hold to stderr, in every format: `stale: #14 held by <locator>, idle 2h41m, note: "…"` (`, note: "…"` only when there is a note, quoted with `strconv.Quote` so a note with a newline cannot break the line or forge another one). Nothing stale is added to stdout. crm never acts on stale holds. `printStale` in `internal/cli/task_claim.go` (file 7) is the only formatter of these lines; `list` (file 8) calls it. The report is read after `next` commits its pick, so a failed read must not hide the pick: `next` writes `stale: report unavailable: <error>` to stderr and still prints the task, with the exit code the pick decides.
+- **MCP.** Tools return the same row shape through `jsonResult` (`internal/mcp/server.go:233`), and errors through `mcpError` (`server.go:295`). `crm_task_next` returns a non-error result `{"task": {...} | null, "stale_holds": [...]}`, so the agent sees stale holds even when the queue is empty. `stale_holds` is `[]`, never `null`; each element is a `StaleHold` (`task_id`, `title`, `holder`, `idle`, `note` when present). When the stale report cannot be read after the pick, the result still carries the task, `stale_holds` is `[]`, and `stale_error` says the holds are unavailable (database details stay out, as in `errText`).
 
 ### Components touched
 

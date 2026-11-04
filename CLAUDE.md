@@ -387,7 +387,7 @@ func TestPersonRepo_Create(t *testing.T) {
 - Uses `mcp-go`: stdio by default, streamable HTTP at `/mcp` with `crm mcp serve --http`. HTTP always goes through `internal/httpguard` (reuse it for any new HTTP server): mandatory bearer token (`--token`/`CRM_MCP_TOKEN`, else generated and printed on stderr for loopback binds; non-loopback binds need an explicit token), loopback Host allowlist, foreign-Origin rejection, body cap, read/idle timeouts
 - **Never write to stdout** in MCP mode — stdout is the JSON-RPC transport. All logging goes to `stderr`.
 - One-entity tools are thin wrappers calling repository methods; batch tools are thin wrappers calling `internal/service` and report errors per item (`errText`) instead of failing the call
-- Task claim tools (`internal/mcp/task_claim.go`): `crm_task_next`, `crm_task_claim`, `crm_task_note`, `crm_task_wait`, `crm_task_release`, `crm_task_done`, thin wrappers over `repo.TaskClaimRepo`; `crm_task_next` returns `{task, stale_holds}` and is never an error for an empty queue
+- Task claim tools (`internal/mcp/task_claim.go`): `crm_task_next`, `crm_task_claim`, `crm_task_note`, `crm_task_wait`, `crm_task_release`, `crm_task_done`, thin wrappers over `repo.TaskClaimRepo`; `crm_task_next` returns `{task, stale_holds}` (plus `stale_error` when the stale read fails after the pick) and is never an error for an empty queue
 - Return errors as MCP content with `isError: true` — don't return Go errors from tool handlers
 - Handle graceful shutdown via context cancellation
 - Tool input is JSON-decoded into Go structs
