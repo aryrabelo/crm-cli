@@ -27,6 +27,8 @@ func TestValidLocator(t *testing.T) {
 		{"tab", "omp:wh\tere:s", false},
 		{"newline", "omp:where:s\n", false},
 		{"DEL", "omp:where:s\x7f", false},
+		{"invalid UTF-8 byte", "omp:where:s\xff", false},
+		{"non-ASCII UTF-8", "omp:~/Sites/ação:p6", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

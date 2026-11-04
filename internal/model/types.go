@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Person represents a contact in the CRM.
@@ -269,11 +270,12 @@ type StaleHold struct {
 	Note   *string `json:"note,omitempty"`
 }
 
-// ValidLocator reports whether s is <runtime>:<where>:<session>: at least
-// three colon-separated non-empty segments, at most MaxLocatorBytes bytes,
-// no control characters.
+// ValidLocator reports whether s is <runtime>:<where>:<session>: valid
+// UTF-8 (JSON output would rewrite a bad byte, so the printed holder would
+// not match --as), at least three colon-separated non-empty segments, at
+// most MaxLocatorBytes bytes, no control characters.
 func ValidLocator(s string) bool {
-	if s == "" || len(s) > MaxLocatorBytes {
+	if s == "" || len(s) > MaxLocatorBytes || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
