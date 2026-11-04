@@ -13,7 +13,8 @@ import (
 // the entity tools lack, over the same repository.
 
 const claimRule = " Pick work with crm_task_next, or crm_task_claim a task from crm_task_list. " +
-	"Never act on a task you do not hold. Call crm_task_note before each external side effect (send, draft, message)."
+	"Never work on a task you do not hold (only crm_task_done and releasing a waiting task need no hold). " +
+	"Call crm_task_note before each external side effect (send, draft, message)."
 
 type taskNextArgs struct {
 	As string `json:"as" jsonschema_description:"Your locator: <runtime>:<where>:<session>, unique per live agent session (e.g. openbot:Pessoal:<thread>)"`
